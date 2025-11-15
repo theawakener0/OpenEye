@@ -1,0 +1,198 @@
+package memory
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	_ "github.com/mattn/go-sqlite3"
+)
+
+// Entry represents a single conversational turn persisted in the store.
+type Entry struct {
+	Role      string
+	Content   string
+	CreatedAt time.Time
+}
+
+// Store wraps a SQLite database connection for persisting conversation history.
+type Store struct {
+	db         *sql.DB
+	insertStmt *sql.Stmt
+	selectStmt *sql.Stmt
+	mu         sync.RWMutex
+}
+
+// NewStore opens (and initializes) a SQLite database file for conversation memory.
+func NewStore(path string) (*Store, error) {
+	if path == "" {
+		path = "openeye_memory.db"
+	}
+
+	if dir := filepath.Dir(filepath.Clean(path)); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("failed to ensure memory directory: %w", err)
+		}
+	}
+
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_busy_timeout=5000&_journal_mode=WAL", path))
+	if err != nil {
+		return nil, fmt.Errorf("failed to open memory store: %w", err)
+	}
+
+	if err := bootstrap(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	insertStmt, err := db.Prepare(`INSERT INTO interactions (role, content, created_at) VALUES (?, ?, ?)`) 
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to prepare insert statement: %w", err)
+	}
+
+	selectStmt, err := db.Prepare(`SELECT role, content, created_at FROM interactions ORDER BY created_at DESC LIMIT ?`)
+	if err != nil {
+		insertStmt.Close()
+		db.Close()
+		return nil, fmt.Errorf("failed to prepare select statement: %w", err)
+	}
+
+	return &Store{db: db, insertStmt: insertStmt, selectStmt: selectStmt}, nil
+}
+
+func bootstrap(db *sql.DB) error {
+	if _, err := db.Exec(`
+		PRAGMA journal_mode=WAL;
+		PRAGMA synchronous=NORMAL;
+	`); err != nil {
+		return fmt.Errorf("failed to configure database: %w", err)
+	}
+
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS interactions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		);
+	`); err != nil {
+		return fmt.Errorf("failed to create interactions table: %w", err)
+	}
+
+	return nil
+}
+
+// Append persists a new conversational turn into the store.
+func (s *Store) Append(role, content string) error {
+	if s == nil || s.db == nil {
+		return errors.New("memory store is not initialized")
+	}
+
+	if role == "" {
+		return errors.New("role must not be empty")
+	}
+	if content == "" {
+		return errors.New("content must not be empty")
+	}
+
+	s.mu.RLock()
+	stmt := s.insertStmt
+	s.mu.RUnlock()
+
+	if stmt == nil {
+		return errors.New("insert statement not prepared")
+	}
+
+	if _, err := stmt.Exec(role, content, time.Now().Unix()); err != nil {
+		return fmt.Errorf("failed to append memory entry: %w", err)
+	}
+
+	return nil
+}
+
+// Recent retrieves up to the provided limit of the most recent entries.
+func (s *Store) Recent(limit int) ([]Entry, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("memory store is not initialized")
+	}
+	if limit <= 0 {
+		return nil, errors.New("limit must be greater than zero")
+	}
+
+	s.mu.RLock()
+	stmt := s.selectStmt
+	s.mu.RUnlock()
+	if stmt == nil {
+		return nil, errors.New("select statement not prepared")
+	}
+
+	rows, err := stmt.Query(limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query recent memory: %w", err)
+	}
+	defer rows.Close()
+
+	entries := make([]Entry, 0, limit)
+	for rows.Next() {
+		var (
+			role   string
+			content string
+			ts      int64
+		)
+		if err := rows.Scan(&role, &content, &ts); err != nil {
+			return nil, fmt.Errorf("failed to scan memory row: %w", err)
+		}
+		entries = append(entries, Entry{Role: role, Content: content, CreatedAt: time.Unix(ts, 0)})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating memory rows: %w", err)
+	}
+
+	return entries, nil
+}
+
+// Close releases database resources held by the store.
+func (s *Store) Close() error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var firstErr error
+	if s.insertStmt != nil {
+		if err := s.insertStmt.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if s.selectStmt != nil {
+		if err := s.selectStmt.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if s.db != nil {
+		if err := s.db.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	s.insertStmt = nil
+	s.selectStmt = nil
+	s.db = nil
+
+	return firstErr
+}
+
+
+
+
+
+
+

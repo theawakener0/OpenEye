@@ -1,0 +1,58 @@
+# OpenEye configuration file
+# Copy or modify this file to suit your local environment. Values shown here match the runtime defaults.
+
+runtime:
+  backend: http
+  http:
+    base_url: "http://127.0.0.1:42069"
+    timeout: "0"
+  defaults:
+    max_tokens: 512
+    temperature: 0.7
+    top_k: 40
+    top_p: 0.9
+    min_p: 0.05
+    repeat_penalty: 1.1
+    repeat_last_n: 64
+    stop: []
+
+memory:
+  path: "openeye_memory.db"
+  turns_to_use: 6
+
+server:
+  host: "127.0.0.1"
+  port: 42067
+  enabled: true
+
+conversation:
+  system_message: ""
+  template_path: ""
+
+rag:
+  enabled: false
+  corpus_path: "./rag_corpus"
+  max_chunks: 4
+  chunk_size: 512
+  chunk_overlap: 64
+  min_score: 0.2
+  index_path: "openeye_rag.index"
+  extensions: [".txt", ".md", ".markdown", ".rst", ".log", ".csv", ".tsv", ".json", ".yaml", ".yml", ".pdf"]
+
+assistants:
+  summarizer:
+    enabled: false
+    prompt: "Summarize the following conversation history in concise bullet points highlighting commitments, open questions, and facts. Respond with at most five bullets."
+    max_tokens: 128
+    min_turns: 3
+    max_references: 8
+    similarity_threshold: 0.1
+    max_transcript_tokens: 0
+
+embedding:
+  enabled: false
+  backend: "llamacpp"
+  llamacpp:
+    base_url: "http://127.0.0.1:8080"
+    model: ""
+    timeout: "30s"
