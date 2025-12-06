@@ -23,6 +23,7 @@ type TCPServer struct {
 // Message represents a single inbound payload with facilities to respond.
 type Message struct {
 	Content string
+	Images  []string // Base64-encoded images or file paths
 	respond func(responsePayload) error
 }
 
@@ -99,12 +100,17 @@ func (s *TCPServer) handleConnection(conn net.Conn) {
 			continue
 		}
 		message = strings.TrimRight(message, "\r\n")
-		log.Printf("Received message: %s", message)
+		
+		// Parse message format: [IMG:base64,base64,...] content
+		// or just: content (no images)
+		content, images := parseMessageWithImages(message)
+		log.Printf("Received message: %s (images: %d)", truncateLog(content, 100), len(images))
 
 		replyCh := make(chan responsePayload, 1)
 		done := make(chan struct{})
 		inbound := Message{
-			Content: message,
+			Content: content,
+			Images:  images,
 			respond: func(resp responsePayload) error {
 				select {
 				case <-done:
@@ -235,4 +241,192 @@ func (s *TCPServer) SendData(conn net.Conn, data []byte) (int, error) {
 
 func encodePayload(payload string) string {
 	return base64.StdEncoding.EncodeToString([]byte(payload))
+}
+
+func parseMessageWithImages(raw string) (content string, images []string) {
+	content = raw
+	
+	// Check for [IMG:...] prefix format (comma-separated in single block)
+	if strings.HasPrefix(raw, "[IMG:") {
+		endIdx := strings.Index(raw, "]")
+		if endIdx > 5 {
+			imgData := raw[5:endIdx]
+			// Split by comma for multiple images
+			for _, img := range strings.Split(imgData, ",") {
+				img = strings.TrimSpace(img)
+				if img != "" {
+					images = append(images, img)
+				}
+			}
+			content = strings.TrimSpace(raw[endIdx+1:])
+			
+			// Check for additional [IMG:...] blocks
+			for strings.HasPrefix(content, "[IMG:") {
+				nextEnd := strings.Index(content, "]")
+				if nextEnd > 5 {
+					imgData := content[5:nextEnd]
+					for _, img := range strings.Split(imgData, ",") {
+						img = strings.TrimSpace(img)
+						if img != "" {
+							images = append(images, img)
+						}
+					}
+					content = strings.TrimSpace(content[nextEnd+1:])
+				} else {
+					break
+				}
+			}
+			return content, images
+		}
+	}
+	
+	// Check for JSON-like format: {"images":["...","..."],"content":"..."}
+	if strings.HasPrefix(raw, "{") && strings.Contains(raw, "\"images\"") {
+		content, images = parseJSONMessage(raw)
+		if content != "" || len(images) > 0 {
+			return content, images
+		}
+	}
+	
+	return raw, nil
+}
+
+// parseJSONMessage attempts to parse a simple JSON format for messages with images.
+// Format: {"images":["base64_1","base64_2"],"content":"message text"}
+func parseJSONMessage(raw string) (content string, images []string) {
+	// Simple parsing without full JSON library for performance
+	// Extract content field
+	contentStart := strings.Index(raw, "\"content\"")
+	if contentStart != -1 {
+		// Find the value after "content":
+		afterContent := raw[contentStart+9:]
+		colonIdx := strings.Index(afterContent, ":")
+		if colonIdx != -1 {
+			afterColon := strings.TrimSpace(afterContent[colonIdx+1:])
+			if strings.HasPrefix(afterColon, "\"") {
+				// Find the closing quote (handle escaped quotes)
+				content = extractQuotedString(afterColon)
+			}
+		}
+	}
+	
+	// Extract images array
+	imagesStart := strings.Index(raw, "\"images\"")
+	if imagesStart != -1 {
+		afterImages := raw[imagesStart+8:]
+		colonIdx := strings.Index(afterImages, ":")
+		if colonIdx != -1 {
+			afterColon := strings.TrimSpace(afterImages[colonIdx+1:])
+			if strings.HasPrefix(afterColon, "[") {
+				// Find closing bracket
+				bracketEnd := findMatchingBracket(afterColon)
+				if bracketEnd > 0 {
+					arrayContent := afterColon[1:bracketEnd]
+					// Extract each quoted string
+					for len(arrayContent) > 0 {
+						arrayContent = strings.TrimSpace(arrayContent)
+						if strings.HasPrefix(arrayContent, "\"") {
+							img := extractQuotedString(arrayContent)
+							if img != "" {
+								images = append(images, img)
+							}
+							// Move past this string and comma
+							endQuote := strings.Index(arrayContent[1:], "\"")
+							if endQuote != -1 {
+								arrayContent = arrayContent[endQuote+2:]
+								commaIdx := strings.Index(arrayContent, ",")
+								if commaIdx != -1 {
+									arrayContent = arrayContent[commaIdx+1:]
+								} else {
+									break
+								}
+							} else {
+								break
+							}
+						} else {
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	return content, images
+}
+
+// extractQuotedString extracts a quoted string value, handling basic escapes.
+func extractQuotedString(s string) string {
+	if !strings.HasPrefix(s, "\"") {
+		return ""
+	}
+	s = s[1:] // Skip opening quote
+	var result strings.Builder
+	escaped := false
+	for _, c := range s {
+		if escaped {
+			switch c {
+			case 'n':
+				result.WriteRune('\n')
+			case 't':
+				result.WriteRune('\t')
+			case 'r':
+				result.WriteRune('\r')
+			default:
+				result.WriteRune(c)
+			}
+			escaped = false
+		} else if c == '\\' {
+			escaped = true
+		} else if c == '"' {
+			return result.String()
+		} else {
+			result.WriteRune(c)
+		}
+	}
+	return result.String()
+}
+
+// findMatchingBracket finds the index of the closing bracket.
+func findMatchingBracket(s string) int {
+	if !strings.HasPrefix(s, "[") {
+		return -1
+	}
+	depth := 0
+	inQuote := false
+	escaped := false
+	for i, c := range s {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			inQuote = !inQuote
+			continue
+		}
+		if inQuote {
+			continue
+		}
+		if c == '[' {
+			depth++
+		} else if c == ']' {
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// truncateLog truncates a string for logging.
+func truncateLog(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

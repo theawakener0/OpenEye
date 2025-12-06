@@ -71,7 +71,14 @@ func RunServe(ctx context.Context, cfg config.Config) int {
 		}
 
 		go func(inbound server.Message) {
-			result, runErr := pipe.Respond(context.Background(), inbound.Content, pipeline.Options{})
+			// Use images from the message if provided
+			var images []string
+			if len(inbound.Images) > 0 {
+				images = inbound.Images
+				log.Printf("Processing request with %d image(s)", len(images))
+			}
+			
+			result, runErr := pipe.Respond(context.Background(), inbound.Content, images, pipeline.Options{})
 			if runErr != nil {
 				log.Printf("runtime error: %v", runErr)
 				if respErr := inbound.RespondError(runErr); respErr != nil {
@@ -82,7 +89,15 @@ func RunServe(ctx context.Context, cfg config.Config) int {
 			if respErr := inbound.Respond(result.Text); respErr != nil {
 				log.Printf("response error: %v", respErr)
 			}
-			log.Printf("response: %s", result.Text)
+			log.Printf("response: %s", truncateResponse(result.Text, 100))
 		}(msg)
 	}
+}
+
+// truncateResponse shortens a response for logging.
+func truncateResponse(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

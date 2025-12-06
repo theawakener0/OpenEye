@@ -64,7 +64,6 @@ func (a *Adapter) Generate(ctx context.Context, req runtime.Request) (runtime.Re
 	options := mergeOptions(a.defaults, req.Options)
 
 	completionReq := CompletionRequest{
-		Prompt:        req.Prompt,
 		NPredict:      options.MaxTokens,
 		Temperature:   options.Temperature,
 		TopK:          options.TopK,
@@ -75,6 +74,16 @@ func (a *Adapter) Generate(ctx context.Context, req runtime.Request) (runtime.Re
 		Stream:        false,
 		CachePrompt:   true,
 		Stop:          options.Stop,
+	}
+
+	// If images are provided, use the multimodal prompt format
+	if len(req.Image) > 0 {
+		completionReq.Prompt = MultimodalPrompt{
+			PromptString:   req.Prompt,
+			MultimodalData: req.Image,
+		}
+	} else {
+		completionReq.Prompt = req.Prompt
 	}
 
 	resp, err := a.client.Generate(ctx, completionReq)
@@ -98,6 +107,11 @@ func (a *Adapter) Stream(ctx context.Context, req runtime.Request, cb runtime.St
 	response, err := a.Generate(ctx, req)
 	if err != nil {
 		return err
+	}
+
+	if response.Text == "" {
+		// No content to stream - still send final event
+		return cb(runtime.StreamEvent{Final: true})
 	}
 
 	tokens := chunkForStreaming(response.Text)

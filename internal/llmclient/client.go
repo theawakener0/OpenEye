@@ -5,12 +5,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"time"
 )
 
+// MultimodalPrompt represents a prompt with optional multimodal data for llama.cpp
+type MultimodalPrompt struct {
+	PromptString   string   `json:"prompt_string"`
+	MultimodalData []string `json:"multimodal_data,omitempty"`
+}
+
+// CompletionRequest represents the request structure for llama.cpp /completion endpoint
 type CompletionRequest struct {
-	Prompt        string   `json:"prompt"`
+	Prompt        any      `json:"prompt"` // Can be string or MultimodalPrompt
 	NPredict      int      `json:"n_predict,omitempty"`
 	Temperature   float64  `json:"temperature,omitempty"`
 	TopK          int      `json:"top_k,omitempty"`
@@ -61,6 +70,13 @@ func (c *Client) Generate(ctx context.Context, req CompletionRequest) (Completio
 		return CompletionResponse{}, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
+	// DEBUG: Log if images are included in request
+	/*if len(req.Image) > 0 {
+		log.Printf("debug: sending request with %d image(s), first image length=%d", len(req.Image), len(req.Image[0]))
+	} else {
+		log.Printf("debug: sending request WITHOUT images")
+	}*/
+
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(bodyBytes))
 	if err != nil {
 		return CompletionResponse{}, fmt.Errorf("failed to create request: %w", err)
@@ -73,27 +89,51 @@ func (c *Client) Generate(ctx context.Context, req CompletionRequest) (Completio
 	}
 	defer resp.Body.Close()
 
+	// Read the full response body for debugging
+	respBodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return CompletionResponse{}, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	//log.Printf("debug: response status=%d, body length=%d", resp.StatusCode, len(respBodyBytes))
+	
+	// Print first 500 chars of response for debugging
+	/*preview := string(respBodyBytes)
+	if len(preview) > 500 {
+		preview = preview[:500] + "..."
+	}
+	log.Printf("debug: raw response: %s", preview)
+*/
+
 	if resp.StatusCode != http.StatusOK {
 		var errorBody map[string]any
-		if json.NewDecoder(resp.Body).Decode(&errorBody) == nil {
+		if json.Unmarshal(respBodyBytes, &errorBody) == nil {
 			return CompletionResponse{}, fmt.Errorf("server returned %d: %v", resp.StatusCode, errorBody)
 		}
-		return CompletionResponse{}, fmt.Errorf("server returned status %d", resp.StatusCode)
+		return CompletionResponse{}, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(respBodyBytes))
 	}
 
 	var respBody CompletionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+	if err := json.Unmarshal(respBodyBytes, &respBody); err != nil {
+		log.Printf("debug: failed to parse response: %s", string(respBodyBytes))
 		return CompletionResponse{}, fmt.Errorf("failed to decode response: %w", err)
 	}
+
+	//log.Printf("debug: response content length=%d, stop=%v", len(respBody.Content), respBody.Stop)
+
 	return respBody, nil
 }
 
 func (c *Client) GetResponse(prompt string) (string, error) {
+	return c.GetResponseWithImages(prompt, nil)
+}
+
+// GetResponseWithImages generates a response with optional images.
+func (c *Client) GetResponseWithImages(prompt string, images []string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	req := CompletionRequest{
-		Prompt:        prompt,
 		NPredict:      512,
 		Temperature:   0.7,
 		TopK:          40,
@@ -103,6 +143,16 @@ func (c *Client) GetResponse(prompt string) (string, error) {
 		RepeatLastN:   64,
 		Stream:        false,
 		CachePrompt:   true,
+	}
+
+	// Use multimodal prompt format if images are provided
+	if len(images) > 0 {
+		req.Prompt = MultimodalPrompt{
+			PromptString:   prompt,
+			MultimodalData: images,
+		}
+	} else {
+		req.Prompt = prompt
 	}
 
 	resp, err := c.Generate(ctx, req)

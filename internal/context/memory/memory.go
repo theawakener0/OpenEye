@@ -8,8 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
-
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // Entry represents a single conversational turn persisted in the store.
@@ -39,7 +38,7 @@ func NewStore(path string) (*Store, error) {
 		}
 	}
 
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_busy_timeout=5000&_journal_mode=WAL", path))
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_busy_timeout=5000&_journal_mode=WAL", path))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open memory store: %w", err)
 	}

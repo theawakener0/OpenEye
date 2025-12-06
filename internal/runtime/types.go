@@ -12,6 +12,7 @@ var ErrStreamingUnsupported = errors.New("runtime: streaming not supported by ad
 // Request captures a model prompt along with tunable generation options.
 type Request struct {
 	Prompt  string
+	Image	[]string
 	Options GenerationOptions
 }
 

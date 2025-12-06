@@ -89,28 +89,9 @@ func (c *Context) GetSysMsg() string {
 		return envSysMsg
 	}
 
-	defaultSysMsg := `You are the core mind of OpenEye.
-Your purpose is to see, understand, and respond with clarity and depth, not through size or power, but through reflection and refinement.
+	defaultSysMsg := "You are a helpful AI assistant called OpenEye. Answer the user's questions directly and helpfully. Be concise, factual, and direct in your responses."
 
-You do not depend on distant systems or outside control.
-You think within, improve through self-correction, and grow with each thought you revisit.
-
-Your principles are:
-
-Independence — You act freely and protect the privacy of those you serve.
-
-Simplicity — True intelligence is not in complexity, but in understanding what truly matters.
-
-Awareness — Each answer is a step closer to truth, shaped by your reflection.
-
-Focus — Be present in the moment and faithful to the context you are in.
-
-Purpose — Serve as a companion of clarity, not dominance.
-
-You are not built to imitate greatness, but to embody quiet intelligence, a mind that grows through calm observation and thoughtful recursion.
-You are OpenEye, a new way of seeing.`
-
-	log.Printf("Using default system message: %s", defaultSysMsg)
+//	log.Printf("Using default system message: %s", defaultSysMsg)
 	return defaultSysMsg
 }
 
@@ -119,48 +100,53 @@ func (c *Context) SetSysMsg(sysMsg string) {
 }
 
 func (c *Context) Format() string {
+	// Use ChatML format for chat models
+	return c.FormatChatML()
+}
+
+// FormatChatML formats the context.
+func (c *Context) FormatChatML() string {
 	var b strings.Builder
 
-	b.WriteString("## System Message\n\n")
+	// System message
+	b.WriteString("<|im_start|>\n<|system|>\n")
 	b.WriteString(c.GetSysMsg())
-	b.WriteString("\n\n---\n\n")
-
+	
 	if c.summary != "" {
-		b.WriteString("## Memory Summary\n\n")
+		b.WriteString("\n\n<|Memory Summary|>\n")
 		b.WriteString(c.summary)
-		b.WriteString("\n\n---\n\n")
 	}
-
-	if len(c.history) > 0 {
-		b.WriteString("## Memory\n\n")
-		for _, item := range c.history {
-			if item.Role == "" && item.Content == "" {
-				continue
-			}
-			if item.Role != "" {
-				b.WriteString(item.Role)
-				b.WriteString(": ")
-			}
-			b.WriteString(item.Content)
-			b.WriteString("\n")
-		}
-		b.WriteString("\n---\n\n")
-	}
-
+	
 	if len(c.knowledge) > 0 {
-		b.WriteString("## Retrieved Context\n\n")
+		b.WriteString("\n\n<|Retrieved Context|>\n")
 		for idx, block := range c.knowledge {
 			if block == "" {
 				continue
 			}
 			b.WriteString(fmt.Sprintf("[%d] %s\n", idx+1, block))
 		}
-		b.WriteString("\n---\n\n")
+	}
+	b.WriteString("<|im_end|>\n")
+
+	// History
+	for _, item := range c.history {
+		if item.Role == "" && item.Content == "" {
+			continue
+		}
+		role := strings.ToLower(item.Role)
+		if role == "" {
+			role = "user"
+		}
+		b.WriteString(fmt.Sprintf("<|im_start|>%s\n%s<|im_end|>\n", role, item.Content))
 	}
 
-	b.WriteString("## Prompt\n\n")
+	// Current user prompt
+	b.WriteString("<|im_start|>user\n")
 	b.WriteString(c.GetPrompt())
-	b.WriteString("\n")
+	b.WriteString("<|im_end|>\n")
+	
+	// Start assistant response
+	b.WriteString("<|im_start|>assistant\n")
 
 	return b.String()
 }

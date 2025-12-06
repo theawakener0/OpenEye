@@ -8,7 +8,7 @@ runtime:
     timeout: "0"
   defaults:
     max_tokens: 512
-    temperature: 0.7
+    temperature: 0.2
     top_k: 40
     top_p: 0.9
     min_p: 0.05
@@ -19,10 +19,34 @@ runtime:
 memory:
   path: "openeye_memory.db"
   turns_to_use: 6
+  
+  # Vector Memory Engine (DuckDB-backed)
+  # Enables semantic search and long-term memory for SLMs
+  vector_enabled: true
+  vector_db_path: "openeye_vector.duckdb"
+  embedding_dim: 384                    # Embedding dimension (384 for small models, 768 for larger)
+  
+  # Context Window Management
+  max_context_tokens: 4096              # Maximum tokens for context window
+  reserved_for_prompt: 512              # Tokens reserved for user prompt
+  reserved_for_summary: 256             # Tokens reserved for memory summary
+  
+  # Retrieval Settings
+  min_similarity: 0.3                   # Minimum cosine similarity threshold for retrieval
+  sliding_window_size: 50               # Number of candidates to consider for context fitting
+  recency_weight: 0.3                   # Weight for recency in ranking (0-1)
+  relevance_weight: 0.7                 # Weight for semantic relevance in ranking (0-1)
+  
+  # Memory Compression (reduces storage and improves retrieval)
+  compression_enabled: true             # Enable automatic memory compression
+  compression_age: "24h"                # Compress memories older than this duration
+  compress_batch_size: 10               # Number of memories to compress at once
+  auto_compress: true                   # Automatically compress during normal operation
+  compress_every_n: 50                  # Trigger compression every N inserts
 
 server:
-  host: "127.0.0.1"
-  port: 42067
+  host: "0.0.0.0"
+  port: 8080
   enabled: true
 
 conversation:
@@ -38,6 +62,18 @@ rag:
   min_score: 0.2
   index_path: "openeye_rag.index"
   extensions: [".txt", ".md", ".markdown", ".rst", ".log", ".csv", ".tsv", ".json", ".yaml", ".yml", ".pdf"]
+  
+  # Hybrid Retrieval (combines semantic + keyword + diversity)
+  hybrid_enabled: true                  # Enable advanced hybrid retrieval
+  max_candidates: 50                    # Candidates to consider before reranking
+  diversity_threshold: 0.3              # MMR diversity threshold (0-1)
+  semantic_weight: 0.7                  # Weight for semantic similarity (0-1)
+  keyword_weight: 0.2                   # Weight for BM25 keyword matching (0-1)
+  rag_recency_weight: 0.1               # Weight for document recency (0-1)
+  enable_query_expansion: true          # Expand queries with context terms
+  dedupe_threshold: 0.85                # Similarity threshold for deduplication
+  merge_adjacent_chunks: true           # Merge adjacent chunks from same source
+  max_merged_tokens: 1000               # Max tokens when merging chunks
 
 assistants:
   summarizer:
@@ -53,6 +89,6 @@ embedding:
   enabled: false
   backend: "llamacpp"
   llamacpp:
-    base_url: "http://127.0.0.1:8080"
+    base_url: "http://127.0.0.1:42068"
     model: ""
     timeout: "30s"

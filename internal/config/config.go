@@ -20,6 +20,7 @@ type Config struct {
 	RAG          RAGConfig          `yaml:"rag"`
 	Assistants   AssistantsConfig   `yaml:"assistants"`
 	Embedding    EmbeddingConfig    `yaml:"embedding"`
+	Image        ImageConfig        `yaml:"image"`
 }
 
 // RuntimeConfig selects which backend implementation to use and its settings.
@@ -47,10 +48,29 @@ type HTTPBackendConfig struct {
 	Timeout string `yaml:"timeout"`
 }
 
-// MemoryConfig configures persistent conversation history storage.
+// MemoryConfig configures persistent conversation history storage and vector memory.
 type MemoryConfig struct {
 	Path       string `yaml:"path"`
 	TurnsToUse int    `yaml:"turns_to_use"`
+
+	// Vector memory settings
+	VectorEnabled      bool    `yaml:"vector_enabled"`
+	VectorDBPath       string  `yaml:"vector_db_path"`
+	EmbeddingDim       int     `yaml:"embedding_dim"`
+	MaxContextTokens   int     `yaml:"max_context_tokens"`
+	ReservedForPrompt  int     `yaml:"reserved_for_prompt"`
+	ReservedForSummary int     `yaml:"reserved_for_summary"`
+	MinSimilarity      float64 `yaml:"min_similarity"`
+	SlidingWindowSize  int     `yaml:"sliding_window_size"`
+	RecencyWeight      float64 `yaml:"recency_weight"`
+	RelevanceWeight    float64 `yaml:"relevance_weight"`
+
+	// Memory compression settings
+	CompressionEnabled bool   `yaml:"compression_enabled"`
+	CompressionAge     string `yaml:"compression_age"`
+	CompressBatchSize  int    `yaml:"compress_batch_size"`
+	AutoCompress       bool   `yaml:"auto_compress"`
+	CompressEveryN     int    `yaml:"compress_every_n"`
 }
 
 // ServerConfig defines TCP server settings for the message transport.
@@ -76,6 +96,18 @@ type RAGConfig struct {
 	MinScore     float64 `yaml:"min_score"`
 	IndexPath    string  `yaml:"index_path"`
 	Extensions   []string `yaml:"extensions"`
+
+	// Hybrid retrieval settings
+	HybridEnabled      bool    `yaml:"hybrid_enabled"`
+	MaxCandidates      int     `yaml:"max_candidates"`
+	DiversityThreshold float64 `yaml:"diversity_threshold"`
+	SemanticWeight     float64 `yaml:"semantic_weight"`
+	KeywordWeight      float64 `yaml:"keyword_weight"`
+	RAGRecencyWeight   float64 `yaml:"rag_recency_weight"`
+	EnableQueryExpansion bool  `yaml:"enable_query_expansion"`
+	DedupeThreshold    float64 `yaml:"dedupe_threshold"`
+	MergeAdjacentChunks bool   `yaml:"merge_adjacent_chunks"`
+	MaxMergedTokens    int     `yaml:"max_merged_tokens"`
 }
 
 // AssistantsConfig groups secondary helper models invoked by the pipeline.
@@ -108,6 +140,26 @@ type LlamaCppEmbeddingConfig struct {
 	Timeout string `yaml:"timeout"`
 }
 
+// ImageConfig configures image processing for vision models.
+type ImageConfig struct {
+	// Enabled enables image processing before sending to the model.
+	Enabled bool `yaml:"enabled"`
+	// MaxWidth is the maximum width; images wider will be resized.
+	MaxWidth int `yaml:"max_width"`
+	// MaxHeight is the maximum height; images taller will be resized.
+	MaxHeight int `yaml:"max_height"`
+	// OutputFormat is the target format (jpeg, png, bmp).
+	OutputFormat string `yaml:"output_format"`
+	// Quality is the JPEG quality (1-100), only used for JPEG output.
+	Quality int `yaml:"quality"`
+	// PreserveAspectRatio maintains aspect ratio when resizing.
+	PreserveAspectRatio bool `yaml:"preserve_aspect_ratio"`
+	// AutoDetectInput automatically detects if input is base64 or file path.
+	AutoDetectInput bool `yaml:"auto_detect_input"`
+	// OutputAsBase64 returns processed images as base64 strings.
+	OutputAsBase64 bool `yaml:"output_as_base64"`
+}
+
 const defaultConfigFile = "openeye.yaml"
 
 // Default returns a Config pre-populated with opinionated defaults for local SLMs.
@@ -131,8 +183,23 @@ func Default() Config {
 			},
 		},
 		Memory: MemoryConfig{
-			Path:       "openeye_memory.db",
-			TurnsToUse: 6,
+			Path:               "openeye_memory.db",
+			TurnsToUse:         6,
+			VectorEnabled:      true,
+			VectorDBPath:       "openeye_vector.duckdb",
+			EmbeddingDim:       384,
+			MaxContextTokens:   2048,
+			ReservedForPrompt:  512,
+			ReservedForSummary: 256,
+			MinSimilarity:      0.3,
+			SlidingWindowSize:  50,
+			RecencyWeight:      0.3,
+			RelevanceWeight:    0.7,
+			CompressionEnabled: true,
+			CompressionAge:     "24h",
+			CompressBatchSize:  10,
+			AutoCompress:       true,
+			CompressEveryN:     50,
 		},
 		Server: ServerConfig{
 			Host:    "127.0.0.1",
@@ -141,14 +208,24 @@ func Default() Config {
 		},
 		Conversation: ConversationConfig{},
 		RAG: RAGConfig{
-			Enabled:      false,
-			CorpusPath:   "",
-			MaxChunks:    4,
-			ChunkSize:    512,
-			ChunkOverlap: 64,
-			MinScore:     0.2,
-			IndexPath:    "openeye_rag.index",
-			Extensions:   []string{".txt", ".md", ".markdown", ".rst", ".log", ".csv", ".tsv", ".json", ".yaml", ".yml", ".pdf"},
+			Enabled:             false,
+			CorpusPath:          "",
+			MaxChunks:           4,
+			ChunkSize:           512,
+			ChunkOverlap:        64,
+			MinScore:            0.2,
+			IndexPath:           "openeye_rag.index",
+			Extensions:          []string{".txt", ".md", ".markdown", ".rst", ".log", ".csv", ".tsv", ".json", ".yaml", ".yml", ".pdf"},
+			HybridEnabled:       true,
+			MaxCandidates:       50,
+			DiversityThreshold:  0.3,
+			SemanticWeight:      0.7,
+			KeywordWeight:       0.2,
+			RAGRecencyWeight:    0.1,
+			EnableQueryExpansion: true,
+			DedupeThreshold:     0.85,
+			MergeAdjacentChunks: true,
+			MaxMergedTokens:     1000,
 		},
 		Assistants: AssistantsConfig{
 			Summarizer: SummarizerConfig{
@@ -169,6 +246,16 @@ func Default() Config {
 				Model:   "",
 				Timeout: "30s",
 			},
+		},
+		Image: ImageConfig{
+			Enabled:             true,
+			MaxWidth:            1024,
+			MaxHeight:           1024,
+			OutputFormat:        "jpeg",
+			Quality:             85,
+			PreserveAspectRatio: true,
+			AutoDetectInput:     true,
+			OutputAsBase64:      true,
 		},
 	}
 }
@@ -258,6 +345,51 @@ func merge(base, override Config) Config {
 	if override.Memory.TurnsToUse != 0 {
 		result.Memory.TurnsToUse = override.Memory.TurnsToUse
 	}
+	if override.Memory.VectorEnabled {
+		result.Memory.VectorEnabled = true
+	}
+	if override.Memory.VectorDBPath != "" {
+		result.Memory.VectorDBPath = override.Memory.VectorDBPath
+	}
+	if override.Memory.EmbeddingDim != 0 {
+		result.Memory.EmbeddingDim = override.Memory.EmbeddingDim
+	}
+	if override.Memory.MaxContextTokens != 0 {
+		result.Memory.MaxContextTokens = override.Memory.MaxContextTokens
+	}
+	if override.Memory.ReservedForPrompt != 0 {
+		result.Memory.ReservedForPrompt = override.Memory.ReservedForPrompt
+	}
+	if override.Memory.ReservedForSummary != 0 {
+		result.Memory.ReservedForSummary = override.Memory.ReservedForSummary
+	}
+	if override.Memory.MinSimilarity != 0 {
+		result.Memory.MinSimilarity = override.Memory.MinSimilarity
+	}
+	if override.Memory.SlidingWindowSize != 0 {
+		result.Memory.SlidingWindowSize = override.Memory.SlidingWindowSize
+	}
+	if override.Memory.RecencyWeight != 0 {
+		result.Memory.RecencyWeight = override.Memory.RecencyWeight
+	}
+	if override.Memory.RelevanceWeight != 0 {
+		result.Memory.RelevanceWeight = override.Memory.RelevanceWeight
+	}
+	if override.Memory.CompressionEnabled {
+		result.Memory.CompressionEnabled = true
+	}
+	if override.Memory.CompressionAge != "" {
+		result.Memory.CompressionAge = override.Memory.CompressionAge
+	}
+	if override.Memory.CompressBatchSize != 0 {
+		result.Memory.CompressBatchSize = override.Memory.CompressBatchSize
+	}
+	if override.Memory.AutoCompress {
+		result.Memory.AutoCompress = true
+	}
+	if override.Memory.CompressEveryN != 0 {
+		result.Memory.CompressEveryN = override.Memory.CompressEveryN
+	}
 
 	if override.Server.Host != "" {
 		result.Server.Host = override.Server.Host
@@ -299,6 +431,36 @@ func merge(base, override Config) Config {
 	}
 	if len(override.RAG.Extensions) != 0 {
 		result.RAG.Extensions = append([]string(nil), override.RAG.Extensions...)
+	}
+	if override.RAG.HybridEnabled {
+		result.RAG.HybridEnabled = true
+	}
+	if override.RAG.MaxCandidates != 0 {
+		result.RAG.MaxCandidates = override.RAG.MaxCandidates
+	}
+	if override.RAG.DiversityThreshold != 0 {
+		result.RAG.DiversityThreshold = override.RAG.DiversityThreshold
+	}
+	if override.RAG.SemanticWeight != 0 {
+		result.RAG.SemanticWeight = override.RAG.SemanticWeight
+	}
+	if override.RAG.KeywordWeight != 0 {
+		result.RAG.KeywordWeight = override.RAG.KeywordWeight
+	}
+	if override.RAG.RAGRecencyWeight != 0 {
+		result.RAG.RAGRecencyWeight = override.RAG.RAGRecencyWeight
+	}
+	if override.RAG.EnableQueryExpansion {
+		result.RAG.EnableQueryExpansion = true
+	}
+	if override.RAG.DedupeThreshold != 0 {
+		result.RAG.DedupeThreshold = override.RAG.DedupeThreshold
+	}
+	if override.RAG.MergeAdjacentChunks {
+		result.RAG.MergeAdjacentChunks = true
+	}
+	if override.RAG.MaxMergedTokens != 0 {
+		result.RAG.MaxMergedTokens = override.RAG.MaxMergedTokens
 	}
 
 	if override.Assistants.Summarizer.Enabled {
