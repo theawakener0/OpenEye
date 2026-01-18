@@ -53,7 +53,7 @@ type MemoryConfig struct {
 	Path       string `yaml:"path"`
 	TurnsToUse int    `yaml:"turns_to_use"`
 
-	// Vector memory settings
+	// Vector memory settings (legacy)
 	VectorEnabled      bool    `yaml:"vector_enabled"`
 	VectorDBPath       string  `yaml:"vector_db_path"`
 	EmbeddingDim       int     `yaml:"embedding_dim"`
@@ -71,6 +71,197 @@ type MemoryConfig struct {
 	CompressBatchSize  int    `yaml:"compress_batch_size"`
 	AutoCompress       bool   `yaml:"auto_compress"`
 	CompressEveryN     int    `yaml:"compress_every_n"`
+
+	// Mem0-style long-term memory (legacy)
+	Mem0 Mem0Config `yaml:"mem0"`
+
+	// Omem advanced long-term memory (next-gen)
+	Omem OmemConfig `yaml:"omem"`
+}
+
+// OmemConfig configures the Omem (Optimal Memory) advanced long-term memory system.
+// Omem combines techniques from SimpleMem, HippoRAG, and Zep for efficient SLM memory.
+type OmemConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// Storage configuration
+	Storage OmemStorageConfig `yaml:"storage"`
+
+	// Atomic encoding (SimpleMem-inspired)
+	AtomicEncoder OmemEncoderConfig `yaml:"atomic_encoder"`
+
+	// Multi-view indexing (semantic + lexical + symbolic)
+	MultiView OmemMultiViewConfig `yaml:"multi_view"`
+
+	// Entity graph (lightweight HippoRAG-inspired)
+	EntityGraph OmemEntityGraphConfig `yaml:"entity_graph"`
+
+	// Adaptive retrieval (complexity-aware)
+	Retrieval OmemRetrievalConfig `yaml:"retrieval"`
+
+	// Episode/session tracking (Zep-inspired)
+	Episodes OmemEpisodesConfig `yaml:"episodes"`
+
+	// Rolling summary
+	Summary OmemSummaryConfig `yaml:"summary"`
+
+	// Parallel processing
+	Parallel OmemParallelConfig `yaml:"parallel"`
+}
+
+// OmemStorageConfig configures Omem DuckDB storage.
+type OmemStorageConfig struct {
+	DBPath          string `yaml:"db_path"`
+	MaxFacts        int    `yaml:"max_facts"`
+	PruneThreshold  int    `yaml:"prune_threshold"`
+	PruneKeepRecent int    `yaml:"prune_keep_recent"`
+	EnableFTS       bool   `yaml:"enable_fts"`
+}
+
+// OmemEncoderConfig configures atomic fact encoding.
+type OmemEncoderConfig struct {
+	Enabled           bool    `yaml:"enabled"`
+	EnableCoreference bool    `yaml:"enable_coreference"`
+	EnableTemporal    bool    `yaml:"enable_temporal"`
+	MaxFactsPerTurn   int     `yaml:"max_facts_per_turn"`
+	MinFactImportance float64 `yaml:"min_fact_importance"`
+	MinTextLength     int     `yaml:"min_text_length"`
+	UseLLMForComplex  bool    `yaml:"use_llm_for_complex"`
+}
+
+// OmemMultiViewConfig configures hybrid multi-view indexing.
+type OmemMultiViewConfig struct {
+	Enabled            bool    `yaml:"enabled"`
+	SemanticWeight     float64 `yaml:"semantic_weight"`
+	LexicalWeight      float64 `yaml:"lexical_weight"`
+	SymbolicWeight     float64 `yaml:"symbolic_weight"`
+	BM25_K1            float64 `yaml:"bm25_k1"`
+	BM25_B             float64 `yaml:"bm25_b"`
+	ExtractKeywords    bool    `yaml:"extract_keywords"`
+	MaxKeywordsPerFact int     `yaml:"max_keywords_per_fact"`
+}
+
+// OmemEntityGraphConfig configures the lightweight entity-relationship graph.
+type OmemEntityGraphConfig struct {
+	Enabled             bool    `yaml:"enabled"`
+	MaxHops             int     `yaml:"max_hops"`
+	EntityResolution    bool    `yaml:"entity_resolution"`
+	SimilarityThreshold float64 `yaml:"similarity_threshold"`
+	UseRegexExtraction  bool    `yaml:"use_regex_extraction"`
+	GraphBoostWeight    float64 `yaml:"graph_boost_weight"`
+}
+
+// OmemRetrievalConfig configures complexity-aware adaptive retrieval.
+type OmemRetrievalConfig struct {
+	DefaultTopK                int     `yaml:"default_top_k"`
+	ComplexityDelta            float64 `yaml:"complexity_delta"`
+	MaxTopK                    int     `yaml:"max_top_k"`
+	MinScore                   float64 `yaml:"min_score"`
+	MaxContextTokens           int     `yaml:"max_context_tokens"`
+	RecencyHalfLifeHours       float64 `yaml:"recency_half_life_hours"`
+	ImportanceWeight           float64 `yaml:"importance_weight"`
+	RecencyWeight              float64 `yaml:"recency_weight"`
+	AccessFrequencyWeight      float64 `yaml:"access_frequency_weight"`
+	EnableComplexityEstimation bool    `yaml:"enable_complexity_estimation"`
+}
+
+// OmemEpisodesConfig configures Zep-inspired session/episode tracking.
+type OmemEpisodesConfig struct {
+	Enabled             bool   `yaml:"enabled"`
+	SessionTimeout      string `yaml:"session_timeout"`
+	SummaryOnClose      bool   `yaml:"summary_on_close"`
+	MaxEpisodesInCache  int    `yaml:"max_episodes_in_cache"`
+	TrackEntityMentions bool   `yaml:"track_entity_mentions"`
+}
+
+// OmemSummaryConfig configures rolling summary generation.
+type OmemSummaryConfig struct {
+	Enabled              bool   `yaml:"enabled"`
+	RefreshInterval      string `yaml:"refresh_interval"`
+	MaxFacts             int    `yaml:"max_facts"`
+	MaxTokens            int    `yaml:"max_tokens"`
+	Async                bool   `yaml:"async"`
+	IncrementalUpdate    bool   `yaml:"incremental_update"`
+	MinNewFactsForUpdate int    `yaml:"min_new_facts_for_update"`
+}
+
+// OmemParallelConfig configures parallel processing.
+type OmemParallelConfig struct {
+	MaxWorkers  int  `yaml:"max_workers"`
+	BatchSize   int  `yaml:"batch_size"`
+	QueueSize   int  `yaml:"queue_size"`
+	EnableAsync bool `yaml:"enable_async"`
+}
+
+// Mem0Config configures the mem0-style intelligent memory system.
+type Mem0Config struct {
+	Enabled    bool                 `yaml:"enabled"`
+	Storage    Mem0StorageConfig    `yaml:"storage"`
+	Extraction Mem0ExtractionConfig `yaml:"extraction"`
+	Updates    Mem0UpdatesConfig    `yaml:"updates"`
+	Graph      Mem0GraphConfig      `yaml:"graph"`
+	Retrieval  Mem0RetrievalConfig  `yaml:"retrieval"`
+	Summary    Mem0SummaryConfig    `yaml:"summary"`
+}
+
+// Mem0StorageConfig configures mem0 storage.
+type Mem0StorageConfig struct {
+	DBPath          string `yaml:"db_path"`
+	EmbeddingDim    int    `yaml:"embedding_dim"`
+	MaxFacts        int    `yaml:"max_facts"`
+	PruneThreshold  int    `yaml:"prune_threshold"`
+	PruneKeepRecent int    `yaml:"prune_keep_recent"`
+}
+
+// Mem0ExtractionConfig configures fact extraction.
+type Mem0ExtractionConfig struct {
+	Enabled               bool `yaml:"enabled"`
+	BatchSize             int  `yaml:"batch_size"`
+	Async                 bool `yaml:"async"`
+	MinTextLength         int  `yaml:"min_text_length"`
+	MaxFactsPerExtraction int  `yaml:"max_facts_per_extraction"`
+	ExtractEntities       bool `yaml:"extract_entities"`
+	ExtractRelationships  bool `yaml:"extract_relationships"`
+}
+
+// Mem0UpdatesConfig configures memory update operations.
+type Mem0UpdatesConfig struct {
+	Enabled              bool    `yaml:"enabled"`
+	ConflictThreshold    float64 `yaml:"conflict_threshold"`
+	TopSimilarCount      int     `yaml:"top_similar_count"`
+	AutoResolveConflicts bool    `yaml:"auto_resolve_conflicts"`
+	TrackSupersession    bool    `yaml:"track_supersession"`
+}
+
+// Mem0GraphConfig configures entity-relationship graph.
+type Mem0GraphConfig struct {
+	Enabled                   bool    `yaml:"enabled"`
+	EntityResolution          bool    `yaml:"entity_resolution"`
+	EntitySimilarityThreshold float64 `yaml:"entity_similarity_threshold"`
+	MaxHops                   int     `yaml:"max_hops"`
+	TrackRelationshipHistory  bool    `yaml:"track_relationship_history"`
+}
+
+// Mem0RetrievalConfig configures hybrid retrieval.
+type Mem0RetrievalConfig struct {
+	SemanticWeight        float64 `yaml:"semantic_weight"`
+	ImportanceWeight      float64 `yaml:"importance_weight"`
+	RecencyWeight         float64 `yaml:"recency_weight"`
+	AccessFrequencyWeight float64 `yaml:"access_frequency_weight"`
+	MinScore              float64 `yaml:"min_score"`
+	MaxResults            int     `yaml:"max_results"`
+	IncludeGraphResults   bool    `yaml:"include_graph_results"`
+	GraphResultsWeight    float64 `yaml:"graph_results_weight"`
+	RecencyHalfLifeHours  float64 `yaml:"recency_half_life_hours"`
+}
+
+// Mem0SummaryConfig configures rolling summary.
+type Mem0SummaryConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	RefreshInterval string `yaml:"refresh_interval"`
+	MaxFacts        int    `yaml:"max_facts"`
+	MaxTokens       int    `yaml:"max_tokens"`
+	Async           bool   `yaml:"async"`
 }
 
 // ServerConfig defines TCP server settings for the message transport.
@@ -88,26 +279,26 @@ type ConversationConfig struct {
 
 // RAGConfig governs retrieval augmented generation helpers.
 type RAGConfig struct {
-	Enabled      bool    `yaml:"enabled"`
-	CorpusPath   string  `yaml:"corpus_path"`
-	MaxChunks    int     `yaml:"max_chunks"`
-	ChunkSize    int     `yaml:"chunk_size"`
-	ChunkOverlap int     `yaml:"chunk_overlap"`
-	MinScore     float64 `yaml:"min_score"`
-	IndexPath    string  `yaml:"index_path"`
+	Enabled      bool     `yaml:"enabled"`
+	CorpusPath   string   `yaml:"corpus_path"`
+	MaxChunks    int      `yaml:"max_chunks"`
+	ChunkSize    int      `yaml:"chunk_size"`
+	ChunkOverlap int      `yaml:"chunk_overlap"`
+	MinScore     float64  `yaml:"min_score"`
+	IndexPath    string   `yaml:"index_path"`
 	Extensions   []string `yaml:"extensions"`
 
 	// Hybrid retrieval settings
-	HybridEnabled      bool    `yaml:"hybrid_enabled"`
-	MaxCandidates      int     `yaml:"max_candidates"`
-	DiversityThreshold float64 `yaml:"diversity_threshold"`
-	SemanticWeight     float64 `yaml:"semantic_weight"`
-	KeywordWeight      float64 `yaml:"keyword_weight"`
-	RAGRecencyWeight   float64 `yaml:"rag_recency_weight"`
-	EnableQueryExpansion bool  `yaml:"enable_query_expansion"`
-	DedupeThreshold    float64 `yaml:"dedupe_threshold"`
-	MergeAdjacentChunks bool   `yaml:"merge_adjacent_chunks"`
-	MaxMergedTokens    int     `yaml:"max_merged_tokens"`
+	HybridEnabled        bool    `yaml:"hybrid_enabled"`
+	MaxCandidates        int     `yaml:"max_candidates"`
+	DiversityThreshold   float64 `yaml:"diversity_threshold"`
+	SemanticWeight       float64 `yaml:"semantic_weight"`
+	KeywordWeight        float64 `yaml:"keyword_weight"`
+	RAGRecencyWeight     float64 `yaml:"rag_recency_weight"`
+	EnableQueryExpansion bool    `yaml:"enable_query_expansion"`
+	DedupeThreshold      float64 `yaml:"dedupe_threshold"`
+	MergeAdjacentChunks  bool    `yaml:"merge_adjacent_chunks"`
+	MaxMergedTokens      int     `yaml:"max_merged_tokens"`
 }
 
 // AssistantsConfig groups secondary helper models invoked by the pipeline.
@@ -200,6 +391,128 @@ func Default() Config {
 			CompressBatchSize:  10,
 			AutoCompress:       true,
 			CompressEveryN:     50,
+			Mem0: Mem0Config{
+				Enabled: true,
+				Storage: Mem0StorageConfig{
+					DBPath:          "openeye_mem0.duckdb",
+					EmbeddingDim:    384,
+					MaxFacts:        10000,
+					PruneThreshold:  12000,
+					PruneKeepRecent: 5000,
+				},
+				Extraction: Mem0ExtractionConfig{
+					Enabled:               true,
+					BatchSize:             3,
+					Async:                 true,
+					MinTextLength:         10,
+					MaxFactsPerExtraction: 10,
+					ExtractEntities:       true,
+					ExtractRelationships:  true,
+				},
+				Updates: Mem0UpdatesConfig{
+					Enabled:              true,
+					ConflictThreshold:    0.85,
+					TopSimilarCount:      5,
+					AutoResolveConflicts: true,
+					TrackSupersession:    true,
+				},
+				Graph: Mem0GraphConfig{
+					Enabled:                   true,
+					EntityResolution:          true,
+					EntitySimilarityThreshold: 0.9,
+					MaxHops:                   2,
+					TrackRelationshipHistory:  false,
+				},
+				Retrieval: Mem0RetrievalConfig{
+					SemanticWeight:        0.50,
+					ImportanceWeight:      0.25,
+					RecencyWeight:         0.15,
+					AccessFrequencyWeight: 0.10,
+					MinScore:              0.3,
+					MaxResults:            20,
+					IncludeGraphResults:   true,
+					GraphResultsWeight:    0.3,
+					RecencyHalfLifeHours:  168,
+				},
+				Summary: Mem0SummaryConfig{
+					Enabled:         true,
+					RefreshInterval: "5m",
+					MaxFacts:        50,
+					MaxTokens:       512,
+					Async:           true,
+				},
+			},
+			Omem: OmemConfig{
+				Enabled: true,
+				Storage: OmemStorageConfig{
+					DBPath:          "openeye_omem.duckdb",
+					MaxFacts:        10000,
+					PruneThreshold:  12000,
+					PruneKeepRecent: 5000,
+					EnableFTS:       true,
+				},
+				AtomicEncoder: OmemEncoderConfig{
+					Enabled:           true,
+					EnableCoreference: true,
+					EnableTemporal:    true,
+					MaxFactsPerTurn:   10,
+					MinFactImportance: 0.3,
+					MinTextLength:     10,
+					UseLLMForComplex:  true,
+				},
+				MultiView: OmemMultiViewConfig{
+					Enabled:            true,
+					SemanticWeight:     0.5,
+					LexicalWeight:      0.3,
+					SymbolicWeight:     0.2,
+					BM25_K1:            1.2,
+					BM25_B:             0.75,
+					ExtractKeywords:    true,
+					MaxKeywordsPerFact: 20,
+				},
+				EntityGraph: OmemEntityGraphConfig{
+					Enabled:             true,
+					MaxHops:             1,
+					EntityResolution:    true,
+					SimilarityThreshold: 0.85,
+					UseRegexExtraction:  true,
+					GraphBoostWeight:    0.2,
+				},
+				Retrieval: OmemRetrievalConfig{
+					DefaultTopK:                5,
+					ComplexityDelta:            2.0,
+					MaxTopK:                    20,
+					MinScore:                   0.3,
+					MaxContextTokens:           1000,
+					RecencyHalfLifeHours:       168,
+					ImportanceWeight:           0.15,
+					RecencyWeight:              0.1,
+					AccessFrequencyWeight:      0.05,
+					EnableComplexityEstimation: true,
+				},
+				Episodes: OmemEpisodesConfig{
+					Enabled:             true,
+					SessionTimeout:      "30m",
+					SummaryOnClose:      true,
+					MaxEpisodesInCache:  10,
+					TrackEntityMentions: true,
+				},
+				Summary: OmemSummaryConfig{
+					Enabled:              true,
+					RefreshInterval:      "5m",
+					MaxFacts:             50,
+					MaxTokens:            512,
+					Async:                true,
+					IncrementalUpdate:    true,
+					MinNewFactsForUpdate: 5,
+				},
+				Parallel: OmemParallelConfig{
+					MaxWorkers:  0, // Auto-detect from CPU
+					BatchSize:   10,
+					QueueSize:   100,
+					EnableAsync: true,
+				},
+			},
 		},
 		Server: ServerConfig{
 			Host:    "127.0.0.1",
@@ -208,24 +521,24 @@ func Default() Config {
 		},
 		Conversation: ConversationConfig{},
 		RAG: RAGConfig{
-			Enabled:             false,
-			CorpusPath:          "",
-			MaxChunks:           4,
-			ChunkSize:           512,
-			ChunkOverlap:        64,
-			MinScore:            0.2,
-			IndexPath:           "openeye_rag.index",
-			Extensions:          []string{".txt", ".md", ".markdown", ".rst", ".log", ".csv", ".tsv", ".json", ".yaml", ".yml", ".pdf"},
-			HybridEnabled:       true,
-			MaxCandidates:       50,
-			DiversityThreshold:  0.3,
-			SemanticWeight:      0.7,
-			KeywordWeight:       0.2,
-			RAGRecencyWeight:    0.1,
+			Enabled:              false,
+			CorpusPath:           "",
+			MaxChunks:            4,
+			ChunkSize:            512,
+			ChunkOverlap:         64,
+			MinScore:             0.2,
+			IndexPath:            "openeye_rag.index",
+			Extensions:           []string{".txt", ".md", ".markdown", ".rst", ".log", ".csv", ".tsv", ".json", ".yaml", ".yml", ".pdf"},
+			HybridEnabled:        true,
+			MaxCandidates:        50,
+			DiversityThreshold:   0.3,
+			SemanticWeight:       0.7,
+			KeywordWeight:        0.2,
+			RAGRecencyWeight:     0.1,
 			EnableQueryExpansion: true,
-			DedupeThreshold:     0.85,
-			MergeAdjacentChunks: true,
-			MaxMergedTokens:     1000,
+			DedupeThreshold:      0.85,
+			MergeAdjacentChunks:  true,
+			MaxMergedTokens:      1000,
 		},
 		Assistants: AssistantsConfig{
 			Summarizer: SummarizerConfig{
@@ -390,6 +703,12 @@ func merge(base, override Config) Config {
 	if override.Memory.CompressEveryN != 0 {
 		result.Memory.CompressEveryN = override.Memory.CompressEveryN
 	}
+
+	// Merge Mem0 configuration
+	result.Memory.Mem0 = mergeMem0Config(result.Memory.Mem0, override.Memory.Mem0)
+
+	// Merge Omem configuration
+	result.Memory.Omem = mergeOmemConfig(result.Memory.Omem, override.Memory.Omem)
 
 	if override.Server.Host != "" {
 		result.Server.Host = override.Server.Host
@@ -635,4 +954,318 @@ func applyEnvOverrides(cfg *Config) {
 // ServerEnabled reports if the TCP server should be started.
 func (c Config) ServerEnabled() bool {
 	return c.Server.Enabled
+}
+
+// mergeMem0Config merges mem0 configuration with overrides.
+func mergeMem0Config(base, override Mem0Config) Mem0Config {
+	result := base
+
+	if override.Enabled {
+		result.Enabled = true
+	}
+
+	// Storage
+	if override.Storage.DBPath != "" {
+		result.Storage.DBPath = override.Storage.DBPath
+	}
+	if override.Storage.EmbeddingDim != 0 {
+		result.Storage.EmbeddingDim = override.Storage.EmbeddingDim
+	}
+	if override.Storage.MaxFacts != 0 {
+		result.Storage.MaxFacts = override.Storage.MaxFacts
+	}
+	if override.Storage.PruneThreshold != 0 {
+		result.Storage.PruneThreshold = override.Storage.PruneThreshold
+	}
+	if override.Storage.PruneKeepRecent != 0 {
+		result.Storage.PruneKeepRecent = override.Storage.PruneKeepRecent
+	}
+
+	// Extraction
+	if override.Extraction.Enabled {
+		result.Extraction.Enabled = true
+	}
+	if override.Extraction.BatchSize != 0 {
+		result.Extraction.BatchSize = override.Extraction.BatchSize
+	}
+	if override.Extraction.Async {
+		result.Extraction.Async = true
+	}
+	if override.Extraction.MinTextLength != 0 {
+		result.Extraction.MinTextLength = override.Extraction.MinTextLength
+	}
+	if override.Extraction.MaxFactsPerExtraction != 0 {
+		result.Extraction.MaxFactsPerExtraction = override.Extraction.MaxFactsPerExtraction
+	}
+	if override.Extraction.ExtractEntities {
+		result.Extraction.ExtractEntities = true
+	}
+	if override.Extraction.ExtractRelationships {
+		result.Extraction.ExtractRelationships = true
+	}
+
+	// Updates
+	if override.Updates.Enabled {
+		result.Updates.Enabled = true
+	}
+	if override.Updates.ConflictThreshold != 0 {
+		result.Updates.ConflictThreshold = override.Updates.ConflictThreshold
+	}
+	if override.Updates.TopSimilarCount != 0 {
+		result.Updates.TopSimilarCount = override.Updates.TopSimilarCount
+	}
+	if override.Updates.AutoResolveConflicts {
+		result.Updates.AutoResolveConflicts = true
+	}
+	if override.Updates.TrackSupersession {
+		result.Updates.TrackSupersession = true
+	}
+
+	// Graph
+	if override.Graph.Enabled {
+		result.Graph.Enabled = true
+	}
+	if override.Graph.EntityResolution {
+		result.Graph.EntityResolution = true
+	}
+	if override.Graph.EntitySimilarityThreshold != 0 {
+		result.Graph.EntitySimilarityThreshold = override.Graph.EntitySimilarityThreshold
+	}
+	if override.Graph.MaxHops != 0 {
+		result.Graph.MaxHops = override.Graph.MaxHops
+	}
+	if override.Graph.TrackRelationshipHistory {
+		result.Graph.TrackRelationshipHistory = true
+	}
+
+	// Retrieval
+	if override.Retrieval.SemanticWeight != 0 {
+		result.Retrieval.SemanticWeight = override.Retrieval.SemanticWeight
+	}
+	if override.Retrieval.ImportanceWeight != 0 {
+		result.Retrieval.ImportanceWeight = override.Retrieval.ImportanceWeight
+	}
+	if override.Retrieval.RecencyWeight != 0 {
+		result.Retrieval.RecencyWeight = override.Retrieval.RecencyWeight
+	}
+	if override.Retrieval.AccessFrequencyWeight != 0 {
+		result.Retrieval.AccessFrequencyWeight = override.Retrieval.AccessFrequencyWeight
+	}
+	if override.Retrieval.MinScore != 0 {
+		result.Retrieval.MinScore = override.Retrieval.MinScore
+	}
+	if override.Retrieval.MaxResults != 0 {
+		result.Retrieval.MaxResults = override.Retrieval.MaxResults
+	}
+	if override.Retrieval.IncludeGraphResults {
+		result.Retrieval.IncludeGraphResults = true
+	}
+	if override.Retrieval.GraphResultsWeight != 0 {
+		result.Retrieval.GraphResultsWeight = override.Retrieval.GraphResultsWeight
+	}
+	if override.Retrieval.RecencyHalfLifeHours != 0 {
+		result.Retrieval.RecencyHalfLifeHours = override.Retrieval.RecencyHalfLifeHours
+	}
+
+	// Summary
+	if override.Summary.Enabled {
+		result.Summary.Enabled = true
+	}
+	if override.Summary.RefreshInterval != "" {
+		result.Summary.RefreshInterval = override.Summary.RefreshInterval
+	}
+	if override.Summary.MaxFacts != 0 {
+		result.Summary.MaxFacts = override.Summary.MaxFacts
+	}
+	if override.Summary.MaxTokens != 0 {
+		result.Summary.MaxTokens = override.Summary.MaxTokens
+	}
+	if override.Summary.Async {
+		result.Summary.Async = true
+	}
+
+	return result
+}
+
+// mergeOmemConfig merges Omem configuration with overrides.
+func mergeOmemConfig(base, override OmemConfig) OmemConfig {
+	result := base
+
+	if override.Enabled {
+		result.Enabled = true
+	}
+
+	// Storage
+	if override.Storage.DBPath != "" {
+		result.Storage.DBPath = override.Storage.DBPath
+	}
+	if override.Storage.MaxFacts != 0 {
+		result.Storage.MaxFacts = override.Storage.MaxFacts
+	}
+	if override.Storage.PruneThreshold != 0 {
+		result.Storage.PruneThreshold = override.Storage.PruneThreshold
+	}
+	if override.Storage.PruneKeepRecent != 0 {
+		result.Storage.PruneKeepRecent = override.Storage.PruneKeepRecent
+	}
+	if override.Storage.EnableFTS {
+		result.Storage.EnableFTS = true
+	}
+
+	// AtomicEncoder
+	if override.AtomicEncoder.Enabled {
+		result.AtomicEncoder.Enabled = true
+	}
+	if override.AtomicEncoder.EnableCoreference {
+		result.AtomicEncoder.EnableCoreference = true
+	}
+	if override.AtomicEncoder.EnableTemporal {
+		result.AtomicEncoder.EnableTemporal = true
+	}
+	if override.AtomicEncoder.MaxFactsPerTurn != 0 {
+		result.AtomicEncoder.MaxFactsPerTurn = override.AtomicEncoder.MaxFactsPerTurn
+	}
+	if override.AtomicEncoder.MinFactImportance != 0 {
+		result.AtomicEncoder.MinFactImportance = override.AtomicEncoder.MinFactImportance
+	}
+	if override.AtomicEncoder.MinTextLength != 0 {
+		result.AtomicEncoder.MinTextLength = override.AtomicEncoder.MinTextLength
+	}
+	if override.AtomicEncoder.UseLLMForComplex {
+		result.AtomicEncoder.UseLLMForComplex = true
+	}
+
+	// MultiView
+	if override.MultiView.Enabled {
+		result.MultiView.Enabled = true
+	}
+	if override.MultiView.SemanticWeight != 0 {
+		result.MultiView.SemanticWeight = override.MultiView.SemanticWeight
+	}
+	if override.MultiView.LexicalWeight != 0 {
+		result.MultiView.LexicalWeight = override.MultiView.LexicalWeight
+	}
+	if override.MultiView.SymbolicWeight != 0 {
+		result.MultiView.SymbolicWeight = override.MultiView.SymbolicWeight
+	}
+	if override.MultiView.BM25_K1 != 0 {
+		result.MultiView.BM25_K1 = override.MultiView.BM25_K1
+	}
+	if override.MultiView.BM25_B != 0 {
+		result.MultiView.BM25_B = override.MultiView.BM25_B
+	}
+	if override.MultiView.ExtractKeywords {
+		result.MultiView.ExtractKeywords = true
+	}
+	if override.MultiView.MaxKeywordsPerFact != 0 {
+		result.MultiView.MaxKeywordsPerFact = override.MultiView.MaxKeywordsPerFact
+	}
+
+	// EntityGraph
+	if override.EntityGraph.Enabled {
+		result.EntityGraph.Enabled = true
+	}
+	if override.EntityGraph.MaxHops != 0 {
+		result.EntityGraph.MaxHops = override.EntityGraph.MaxHops
+	}
+	if override.EntityGraph.EntityResolution {
+		result.EntityGraph.EntityResolution = true
+	}
+	if override.EntityGraph.SimilarityThreshold != 0 {
+		result.EntityGraph.SimilarityThreshold = override.EntityGraph.SimilarityThreshold
+	}
+	if override.EntityGraph.UseRegexExtraction {
+		result.EntityGraph.UseRegexExtraction = true
+	}
+	if override.EntityGraph.GraphBoostWeight != 0 {
+		result.EntityGraph.GraphBoostWeight = override.EntityGraph.GraphBoostWeight
+	}
+
+	// Retrieval
+	if override.Retrieval.DefaultTopK != 0 {
+		result.Retrieval.DefaultTopK = override.Retrieval.DefaultTopK
+	}
+	if override.Retrieval.ComplexityDelta != 0 {
+		result.Retrieval.ComplexityDelta = override.Retrieval.ComplexityDelta
+	}
+	if override.Retrieval.MaxTopK != 0 {
+		result.Retrieval.MaxTopK = override.Retrieval.MaxTopK
+	}
+	if override.Retrieval.MinScore != 0 {
+		result.Retrieval.MinScore = override.Retrieval.MinScore
+	}
+	if override.Retrieval.MaxContextTokens != 0 {
+		result.Retrieval.MaxContextTokens = override.Retrieval.MaxContextTokens
+	}
+	if override.Retrieval.RecencyHalfLifeHours != 0 {
+		result.Retrieval.RecencyHalfLifeHours = override.Retrieval.RecencyHalfLifeHours
+	}
+	if override.Retrieval.ImportanceWeight != 0 {
+		result.Retrieval.ImportanceWeight = override.Retrieval.ImportanceWeight
+	}
+	if override.Retrieval.RecencyWeight != 0 {
+		result.Retrieval.RecencyWeight = override.Retrieval.RecencyWeight
+	}
+	if override.Retrieval.AccessFrequencyWeight != 0 {
+		result.Retrieval.AccessFrequencyWeight = override.Retrieval.AccessFrequencyWeight
+	}
+	if override.Retrieval.EnableComplexityEstimation {
+		result.Retrieval.EnableComplexityEstimation = true
+	}
+
+	// Episodes
+	if override.Episodes.Enabled {
+		result.Episodes.Enabled = true
+	}
+	if override.Episodes.SessionTimeout != "" {
+		result.Episodes.SessionTimeout = override.Episodes.SessionTimeout
+	}
+	if override.Episodes.SummaryOnClose {
+		result.Episodes.SummaryOnClose = true
+	}
+	if override.Episodes.MaxEpisodesInCache != 0 {
+		result.Episodes.MaxEpisodesInCache = override.Episodes.MaxEpisodesInCache
+	}
+	if override.Episodes.TrackEntityMentions {
+		result.Episodes.TrackEntityMentions = true
+	}
+
+	// Summary
+	if override.Summary.Enabled {
+		result.Summary.Enabled = true
+	}
+	if override.Summary.RefreshInterval != "" {
+		result.Summary.RefreshInterval = override.Summary.RefreshInterval
+	}
+	if override.Summary.MaxFacts != 0 {
+		result.Summary.MaxFacts = override.Summary.MaxFacts
+	}
+	if override.Summary.MaxTokens != 0 {
+		result.Summary.MaxTokens = override.Summary.MaxTokens
+	}
+	if override.Summary.Async {
+		result.Summary.Async = true
+	}
+	if override.Summary.IncrementalUpdate {
+		result.Summary.IncrementalUpdate = true
+	}
+	if override.Summary.MinNewFactsForUpdate != 0 {
+		result.Summary.MinNewFactsForUpdate = override.Summary.MinNewFactsForUpdate
+	}
+
+	// Parallel
+	if override.Parallel.MaxWorkers != 0 {
+		result.Parallel.MaxWorkers = override.Parallel.MaxWorkers
+	}
+	if override.Parallel.BatchSize != 0 {
+		result.Parallel.BatchSize = override.Parallel.BatchSize
+	}
+	if override.Parallel.QueueSize != 0 {
+		result.Parallel.QueueSize = override.Parallel.QueueSize
+	}
+	if override.Parallel.EnableAsync {
+		result.Parallel.EnableAsync = true
+	}
+
+	return result
 }

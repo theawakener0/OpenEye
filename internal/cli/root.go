@@ -56,7 +56,7 @@ func runChat(ctx context.Context, cfg config.Config, registry runtime.Registry, 
 	fs.SetOutput(os.Stdout)
 	message := fs.String("message", "", "Prompt to send to the configured runtime")
 	imageFlag := fs.String("image", "", "Image file path or base64 data (can be repeated with comma separation)")
-	stream := fs.Bool("stream", false, "Stream tokens instead of waiting for the full response")
+	stream := fs.Bool("stream", true, "Stream tokens instead of waiting for the full response")
 	disableRAG := fs.Bool("no-rag", false, "Disable retrieval augmented generation for this request")
 	disableSummary := fs.Bool("no-summary", false, "Disable helper summarizer for this request")
 	disableVectorMemory := fs.Bool("no-vector", false, "Disable vector memory retrieval for this request")
@@ -105,7 +105,7 @@ func runChat(ctx context.Context, cfg config.Config, registry runtime.Registry, 
 func runCli(ctx context.Context, cfg config.Config, registry runtime.Registry, args []string) int {
 	fs := flag.NewFlagSet("cli", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
-	stream := fs.Bool("stream", false, "Stream tokens instead of waiting for the full response")
+	stream := fs.Bool("stream", true, "Stream tokens instead of waiting for the full response")
 	disableRAG := fs.Bool("no-rag", false, "Disable retrieval augmented generation for this request")
 	disableSummary := fs.Bool("no-summary", false, "Disable helper summarizer for this request")
 	disableVectorMemory := fs.Bool("no-vector", false, "Disable vector memory retrieval for this request")

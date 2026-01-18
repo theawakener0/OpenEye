@@ -20,7 +20,7 @@ memory:
   path: "openeye_memory.db"
   turns_to_use: 6
   
-  # Vector Memory Engine (DuckDB-backed)
+  # Vector Memory Engine (DuckDB-backed) - LEGACY
   # Enables semantic search and long-term memory for SLMs
   vector_enabled: true
   vector_db_path: "openeye_vector.duckdb"
@@ -43,6 +43,169 @@ memory:
   compress_batch_size: 10               # Number of memories to compress at once
   auto_compress: true                   # Automatically compress during normal operation
   compress_every_n: 50                  # Trigger compression every N inserts
+
+  # ============================================================================
+  # Mem0-Style Long-Term Memory (NEW)
+  # ============================================================================
+  # Intelligent fact extraction, memory updates (ADD/UPDATE/DELETE/NOOP),
+  # entity-relationship graph, and hybrid retrieval optimized for SLMs.
+  # 
+  # Based on mem0 research: +26% accuracy, 91% lower latency, 90% fewer tokens
+  # ============================================================================
+  mem0:
+    enabled: true
+    
+    # Storage settings
+    storage:
+      db_path: "openeye_mem0.duckdb"    # Path to mem0 database
+      embedding_dim: 384                 # Embedding dimension
+      max_facts: 10000                   # Maximum facts to retain
+      prune_threshold: 12000             # Trigger pruning above this count
+      prune_keep_recent: 5000            # Keep this many recent facts when pruning
+    
+    # Fact Extraction (LLM-based)
+    extraction:
+      enabled: true
+      batch_size: 3                      # Conversation turns to process together
+      async: true                        # Run extraction in background
+      min_text_length: 10                # Minimum text length to process
+      max_facts_per_extraction: 10       # Max facts per extraction batch
+      extract_entities: true             # Extract entities from text
+      extract_relationships: true        # Extract relationships between entities
+    
+    # Memory Update Operations (ADD/UPDATE/DELETE/NOOP)
+    updates:
+      enabled: true
+      conflict_threshold: 0.85           # Similarity threshold for conflict detection
+      top_similar_count: 5               # Number of similar facts to compare
+      auto_resolve_conflicts: true       # Automatically resolve contradictions
+      track_supersession: true           # Track which facts replace others
+    
+    # Entity-Relationship Graph
+    graph:
+      enabled: true
+      entity_resolution: true            # Merge similar entities
+      entity_similarity_threshold: 0.9   # Threshold for entity resolution
+      max_hops: 2                         # Maximum graph traversal depth
+      track_relationship_history: false  # Keep history of relationship changes
+    
+    # Hybrid Retrieval (semantic + importance + recency + access frequency)
+    retrieval:
+      semantic_weight: 0.50              # Weight for semantic similarity
+      importance_weight: 0.25            # Weight for fact importance
+      recency_weight: 0.15               # Weight for recency
+      access_frequency_weight: 0.10      # Weight for access frequency
+      min_score: 0.3                     # Minimum score threshold
+      max_results: 20                    # Maximum results to return
+      include_graph_results: true        # Include graph traversal results
+      graph_results_weight: 0.3          # Weight for graph-based results
+      recency_half_life_hours: 168       # Half-life for recency decay (1 week)
+    
+    # Rolling Summary (async background refresh)
+    summary:
+      enabled: true
+      refresh_interval: "5m"             # How often to refresh summary
+      max_facts: 50                       # Max facts to include in summary
+      max_tokens: 512                     # Max tokens for summary
+      async: true                         # Refresh in background
+
+  # ============================================================================
+  # Omem - Optimal Memory (NEXT-GEN)
+  # ============================================================================
+  # Advanced long-term memory combining SimpleMem, HippoRAG, and Zep techniques.
+  # Designed specifically for on-device SLMs (200M-3B parameters).
+  # 
+  # Key innovations:
+  # - Atomic encoding with coreference resolution and temporal anchoring
+  # - Multi-view indexing: semantic (dense) + lexical (BM25) + symbolic (metadata)
+  # - Zero-LLM retrieval path with rule-based complexity estimation
+  # - Episode/session management for cross-conversation continuity
+  # ============================================================================
+  omem:
+    enabled: true
+    
+    # Storage settings (DuckDB-backed)
+    storage:
+      db_path: "openeye_omem.duckdb"     # Path to Omem database
+      max_facts: 10000                    # Maximum facts to retain
+      prune_threshold: 12000              # Trigger pruning above this count
+      prune_keep_recent: 5000             # Keep this many recent facts when pruning
+      enable_fts: true                    # Enable DuckDB Full-Text Search for BM25
+    
+    # Atomic Encoder (SimpleMem-inspired)
+    # Converts messy conversation into clean, self-contained facts
+    atomic_encoder:
+      enabled: true
+      enable_coreference: true            # Resolve "he/she/it" → actual names
+      enable_temporal: true               # Anchor "yesterday" → "2026-01-16"
+      max_facts_per_turn: 10              # Max facts extracted per conversation turn
+      min_fact_importance: 0.3            # Minimum importance threshold (0-1)
+      min_text_length: 10                 # Minimum text length to process
+      use_llm_for_complex: true           # Use LLM for complex disambiguation
+    
+    # Multi-View Indexing (Hybrid Retrieval)
+    # Three complementary views for maximum recall
+    multi_view:
+      enabled: true
+      semantic_weight: 0.5                # Weight for embedding similarity (0-1)
+      lexical_weight: 0.3                 # Weight for BM25 keyword matching (0-1)
+      symbolic_weight: 0.2                # Weight for metadata filters (0-1)
+      bm25_k1: 1.2                         # BM25 term frequency saturation
+      bm25_b: 0.75                         # BM25 length normalization
+      extract_keywords: true              # Extract keywords for BM25 index
+      max_keywords_per_fact: 20           # Maximum keywords per fact
+    
+    # Entity Graph (Lightweight HippoRAG-inspired)
+    # Connects facts through shared entities and relationships
+    entity_graph:
+      enabled: true
+      max_hops: 1                          # Graph traversal depth (1 = fast, 2+ = thorough)
+      entity_resolution: true             # Merge "John" and "John Smith"
+      similarity_threshold: 0.85          # Threshold for entity resolution
+      use_regex_extraction: true          # Use regex vs LLM for entity extraction
+      graph_boost_weight: 0.2             # Boost for graph-connected facts
+    
+    # Adaptive Retrieval (Complexity-Aware)
+    # Dynamically adjusts retrieval depth based on query complexity
+    retrieval:
+      default_top_k: 5                    # Base number of results
+      complexity_delta: 2.0               # k_dynamic = k_base * (1 + delta * complexity)
+      max_top_k: 20                        # Maximum retrieval depth
+      min_score: 0.3                       # Minimum score threshold
+      max_context_tokens: 1000            # Maximum tokens in retrieved context
+      recency_half_life_hours: 168        # Recency decay half-life (168h = 1 week)
+      importance_weight: 0.15             # Weight for fact importance in scoring
+      recency_weight: 0.1                 # Weight for recency in scoring
+      access_frequency_weight: 0.05       # Weight for access frequency
+      enable_complexity_estimation: true  # Enable zero-LLM query analysis
+    
+    # Episode/Session Tracking (Zep-inspired)
+    # Maintains context across conversation sessions
+    episodes:
+      enabled: true
+      session_timeout: "30m"              # New episode after this inactivity
+      summary_on_close: true              # Generate summary when session ends
+      max_episodes_in_cache: 10           # LRU cache size for recent episodes
+      track_entity_mentions: true         # Track which entities appear in episodes
+    
+    # Rolling Summary
+    # Maintains an incremental user profile summary
+    summary:
+      enabled: true
+      refresh_interval: "5m"              # Background refresh interval
+      max_facts: 50                        # Max facts to include in summary
+      max_tokens: 512                      # Max tokens for generated summary
+      async: true                          # Refresh in background thread
+      incremental_update: true            # Delta-based updates vs full regeneration
+      min_new_facts_for_update: 5         # Threshold for incremental updates
+    
+    # Parallel Processing
+    # Efficient batch processing with goroutine pools
+    parallel:
+      max_workers: 0                       # Worker count (0 = auto-detect from CPU)
+      batch_size: 10                       # Batch size for bulk operations
+      queue_size: 100                      # Async processing queue size
+      enable_async: true                   # Enable background processing
 
 server:
   host: "0.0.0.0"

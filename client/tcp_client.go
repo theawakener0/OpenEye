@@ -112,7 +112,7 @@ func (c *TCPClient) SendMessage(message string) (string, error) {
 }
 
 // SendAndReceive sends a message and waits for the full response after acknowledgment.
-func (c *TCPClient) SendAndReceive(message string) (string, error) {
+func (c *TCPClient) SendAndReceive(message string, tokenCallback func(string)) (string, error) {
 	ack, err := c.SendMessage(message)
 	if err != nil {
 		return "", err
@@ -121,11 +121,25 @@ func (c *TCPClient) SendAndReceive(message string) (string, error) {
 		log.Printf("warning: expected ACK, received %s", ack)
 	}
 
-	resp, err := c.ReceiveMessage()
-	if err != nil {
-		return "", err
+	for {
+		line, err := c.ReceiveMessage()
+		if err != nil {
+			return "", err
+		}
+
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) == 2 {
+			prefix, payload := parts[0], parts[1]
+			if prefix == "TOKN" {
+				decoded, err := base64.StdEncoding.DecodeString(payload)
+				if err == nil && tokenCallback != nil {
+					tokenCallback(string(decoded))
+				}
+				continue
+			}
+		}
+		return decodeProtocolMessage(line)
 	}
-	return decodeProtocolMessage(resp)
 }
 
 func decodeProtocolMessage(raw string) (string, error) {

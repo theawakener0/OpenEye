@@ -25,6 +25,7 @@ type Message struct {
 	Content string
 	Images  []string // Base64-encoded images or file paths
 	respond func(responsePayload) error
+	stream  func(string) error
 }
 
 type responsePayload struct {
@@ -37,6 +38,14 @@ func (m Message) Respond(response string) error {
 	return m.respond(responsePayload{content: response})
 }
 
+// StreamToken sends a partial token back to the originating client.
+func (m Message) StreamToken(token string) error {
+	if m.stream != nil {
+		return m.stream(token)
+	}
+	return nil
+}
+
 // RespondError sends an error back to the originating client.
 func (m Message) RespondError(err error) error {
 	if err == nil {
@@ -45,6 +54,7 @@ func (m Message) RespondError(err error) error {
 	return m.respond(responsePayload{err: err})
 }
 
+// NewTCPServer creates a new TCP server instance.
 func NewTCPServer(address, port string) *TCPServer {
 	return &TCPServer{
 		Address:        address,
@@ -99,8 +109,9 @@ func (s *TCPServer) handleConnection(conn net.Conn) {
 		if len(message) == 0 {
 			continue
 		}
+		streamCh := make(chan string, 100)
 		message = strings.TrimRight(message, "\r\n")
-		
+
 		// Parse message format: [IMG:base64,base64,...] content
 		// or just: content (no images)
 		content, images := parseMessageWithImages(message)
@@ -108,7 +119,17 @@ func (s *TCPServer) handleConnection(conn net.Conn) {
 
 		replyCh := make(chan responsePayload, 1)
 		done := make(chan struct{})
+		var response responsePayload
+
 		inbound := Message{
+			stream: func(token string) error {
+				select {
+				case <-done:
+					return fmt.Errorf("connection closed")
+				case streamCh <- token:
+					return nil
+				}
+			},
 			Content: content,
 			Images:  images,
 			respond: func(resp responsePayload) error {
@@ -123,13 +144,33 @@ func (s *TCPServer) handleConnection(conn net.Conn) {
 
 		select {
 		case s.messageChannel <- inbound:
-		case <-s.shutdown:
-			close(done)
-			return
-		default:
-			log.Printf("Message channel full, dropping message")
-			if _, err := conn.Write([]byte("ERR " + encodePayload("server busy") + "\n")); err != nil {
-				log.Printf("Error notifying client about busy state: %v", err)
+
+			// Response loop: handle both streaming tokens and the final response
+		Loop:
+			for {
+				select {
+				case token := <-streamCh:
+					line := "TOKN " + encodePayload(token) + "\n"
+					if _, err := conn.Write([]byte(line)); err != nil {
+						log.Printf("Error sending token: %v", err)
+						close(done)
+						break Loop
+					}
+				case res := <-replyCh:
+					response = res
+					break Loop
+				case <-s.shutdown:
+					close(done)
+					return
+				}
+			}
+
+			// If done is already closed (error case), return
+			select {
+			case <-done:
+				return
+			default:
+				close(done)
 			}
 			close(done)
 			continue
@@ -141,7 +182,6 @@ func (s *TCPServer) handleConnection(conn net.Conn) {
 			break
 		}
 
-		var response responsePayload
 		select {
 		case response = <-replyCh:
 		case <-s.shutdown:
@@ -245,7 +285,7 @@ func encodePayload(payload string) string {
 
 func parseMessageWithImages(raw string) (content string, images []string) {
 	content = raw
-	
+
 	// Check for [IMG:...] prefix format (comma-separated in single block)
 	if strings.HasPrefix(raw, "[IMG:") {
 		endIdx := strings.Index(raw, "]")
@@ -259,7 +299,7 @@ func parseMessageWithImages(raw string) (content string, images []string) {
 				}
 			}
 			content = strings.TrimSpace(raw[endIdx+1:])
-			
+
 			// Check for additional [IMG:...] blocks
 			for strings.HasPrefix(content, "[IMG:") {
 				nextEnd := strings.Index(content, "]")
@@ -279,7 +319,7 @@ func parseMessageWithImages(raw string) (content string, images []string) {
 			return content, images
 		}
 	}
-	
+
 	// Check for JSON-like format: {"images":["...","..."],"content":"..."}
 	if strings.HasPrefix(raw, "{") && strings.Contains(raw, "\"images\"") {
 		content, images = parseJSONMessage(raw)
@@ -287,7 +327,7 @@ func parseMessageWithImages(raw string) (content string, images []string) {
 			return content, images
 		}
 	}
-	
+
 	return raw, nil
 }
 
@@ -309,7 +349,7 @@ func parseJSONMessage(raw string) (content string, images []string) {
 			}
 		}
 	}
-	
+
 	// Extract images array
 	imagesStart := strings.Index(raw, "\"images\"")
 	if imagesStart != -1 {
@@ -351,7 +391,7 @@ func parseJSONMessage(raw string) (content string, images []string) {
 			}
 		}
 	}
-	
+
 	return content, images
 }
 

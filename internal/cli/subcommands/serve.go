@@ -78,7 +78,19 @@ func RunServe(ctx context.Context, cfg config.Config) int {
 				log.Printf("Processing request with %d image(s)", len(images))
 			}
 			
-			result, runErr := pipe.Respond(context.Background(), inbound.Content, images, pipeline.Options{})
+			opts := pipeline.Options{
+				Stream: true,
+				StreamCallback: func(evt runtime.StreamEvent) error {
+					if evt.Err != nil {
+						return evt.Err
+					}
+					if !evt.Final {
+						return inbound.StreamToken(evt.Token)
+					}
+					return nil
+				},
+			}
+			result, runErr := pipe.Respond(context.Background(), inbound.Content, images, opts)
 			if runErr != nil {
 				log.Printf("runtime error: %v", runErr)
 				if respErr := inbound.RespondError(runErr); respErr != nil {

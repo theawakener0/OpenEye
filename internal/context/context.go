@@ -104,32 +104,47 @@ func (c *Context) Format() string {
 	return c.FormatChatML()
 }
 
-// FormatChatML formats the context.
+// FormatChatML formats the context using a smart token budget.
 func (c *Context) FormatChatML() string {
 	var b strings.Builder
 
-	// System message
-	b.WriteString("<|im_start|>\n<|system|>\n")
-	b.WriteString(c.GetSysMsg())
+	// 1. Build immutable system section
+	var sysBlock strings.Builder
+	sysBlock.WriteString("<|im_start|>\n<|system|>\n")
+	sysBlock.WriteString(c.GetSysMsg())
 	
 	if c.summary != "" {
-		b.WriteString("\n\n<|Memory Summary|>\n")
-		b.WriteString(c.summary)
+		sysBlock.WriteString("\n\n<|Memory Summary|>\n")
+		sysBlock.WriteString(c.summary)
 	}
 	
 	if len(c.knowledge) > 0 {
-		b.WriteString("\n\n<|Retrieved Context|>\n")
+		sysBlock.WriteString("\n\n<|Retrieved Context|>\n")
 		for idx, block := range c.knowledge {
 			if block == "" {
 				continue
 			}
-			b.WriteString(fmt.Sprintf("[%d] %s\n", idx+1, block))
+			sysBlock.WriteString(fmt.Sprintf("[%d] %s\n", idx+1, block))
 		}
 	}
-	b.WriteString("<|im_end|>\n")
+	sysBlock.WriteString("<|im_end|>\n")
 
-	// History
-	for _, item := range c.history {
+	// 2. Build immutable current prompt
+	promptBlock := fmt.Sprintf("<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n", c.GetPrompt())
+
+	// 3. Calculate remaining budget for history
+	// Assuming a safe default context window if we can't measure exactly.
+	// In a real system, we'd use a tokenizer. Here we estimate 1 char ~= 0.3 tokens approx, or just use char limits.
+	// Let's target a conservative 4000 char history window to stay safe for most small models.
+	const maxHistoryChars = 8000 
+	
+	// 4. Build history section backwards until full
+	var historyBlock string
+	currentChars := 0
+	
+	// Iterate backwards
+	for i := len(c.history) - 1; i >= 0; i-- {
+		item := c.history[i]
 		if item.Role == "" && item.Content == "" {
 			continue
 		}
@@ -137,16 +152,20 @@ func (c *Context) FormatChatML() string {
 		if role == "" {
 			role = "user"
 		}
-		b.WriteString(fmt.Sprintf("<|im_start|>%s\n%s<|im_end|>\n", role, item.Content))
+		
+		entry := fmt.Sprintf("<|im_start|>%s\n%s<|im_end|>\n", role, item.Content)
+		if currentChars + len(entry) > maxHistoryChars {
+			break
+		}
+		
+		// Prepend since we are iterating backwards
+		historyBlock = entry + historyBlock
+		currentChars += len(entry)
 	}
 
-	// Current user prompt
-	b.WriteString("<|im_start|>user\n")
-	b.WriteString(c.GetPrompt())
-	b.WriteString("<|im_end|>\n")
-	
-	// Start assistant response
-	b.WriteString("<|im_start|>assistant\n")
+	b.WriteString(sysBlock.String())
+	b.WriteString(historyBlock)
+	b.WriteString(promptBlock)
 
 	return b.String()
 }

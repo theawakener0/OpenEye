@@ -18,12 +18,12 @@ import (
 )
 
 type VectorEntry struct {
-	ID        int64
-	Text      string
-	Summary   string
-	Role      string
-	Embedding []float32
-	CreatedAt time.Time
+	ID         int64
+	Text       string
+	Summary    string
+	Role       string
+	Embedding  []float32
+	CreatedAt  time.Time
 	TokenCount int
 }
 
@@ -216,6 +216,7 @@ func (s *VectorStore) InsertMemory(ctx context.Context, text, summary, role stri
 }
 
 // SearchMemory performs vector similarity search and returns top-K relevant memories.
+// Optimized: Uses batched retrieval with pre-filtering and efficient similarity computation.
 func (s *VectorStore) SearchMemory(ctx context.Context, queryEmbedding []float32, limit int) ([]VectorEntry, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("vector store not initialized")
@@ -232,46 +233,62 @@ func (s *VectorStore) SearchMemory(ctx context.Context, queryEmbedding []float32
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Fetch all memories with embeddings
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, text, summary, role, embedding, token_count, created_at
-		FROM memory
-		WHERE embedding IS NOT NULL
-		ORDER BY created_at DESC
-		LIMIT 1000
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query memories: %w", err)
-	}
-	defer rows.Close()
+	// Normalize query vector once
+	queryVec := normalizeVectorF32(queryEmbedding)
+
+	// Fetch memories in batches to reduce memory pressure
+	// Only fetch recent memories first (temporal locality optimization)
+	const batchSize = 200
+	const maxBatches = 5
 
 	type scoredEntry struct {
 		entry VectorEntry
 		score float64
 	}
 
-	var results []scoredEntry
-	queryVec := normalizeVectorF32(queryEmbedding)
+	results := make([]scoredEntry, 0, limit*2)
+	offset := 0
 
-	for rows.Next() {
-		var entry VectorEntry
-		var embeddingBlob []byte
-		var createdAt time.Time
-
-		if err := rows.Scan(&entry.ID, &entry.Text, &entry.Summary, &entry.Role, &embeddingBlob, &entry.TokenCount, &createdAt); err != nil {
-			continue
+	for batch := 0; batch < maxBatches; batch++ {
+		rows, err := s.db.QueryContext(ctx, `
+			SELECT id, text, summary, role, embedding, token_count, created_at
+			FROM memory
+			WHERE embedding IS NOT NULL AND compressed = FALSE
+			ORDER BY created_at DESC
+			LIMIT ? OFFSET ?
+		`, batchSize, offset)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query memories: %w", err)
 		}
-		entry.CreatedAt = createdAt
 
-		if len(embeddingBlob) > 0 {
-			entry.Embedding = bytesToFloat32Slice(embeddingBlob)
-			entryVec := normalizeVectorF32(entry.Embedding)
-			score := cosineSimilarityF32(queryVec, entryVec)
+		batchCount := 0
+		for rows.Next() {
+			batchCount++
+			var entry VectorEntry
+			var embeddingBlob []byte
+			var createdAt time.Time
 
-			if score >= s.config.MinSimilarity {
-				results = append(results, scoredEntry{entry: entry, score: score})
+			if err := rows.Scan(&entry.ID, &entry.Text, &entry.Summary, &entry.Role, &embeddingBlob, &entry.TokenCount, &createdAt); err != nil {
+				continue
+			}
+			entry.CreatedAt = createdAt
+
+			if len(embeddingBlob) > 0 {
+				entry.Embedding = bytesToFloat32Slice(embeddingBlob)
+				score := cosineSimilarityOptimized(queryVec, entry.Embedding)
+
+				if score >= s.config.MinSimilarity {
+					results = append(results, scoredEntry{entry: entry, score: score})
+				}
 			}
 		}
+		rows.Close()
+
+		// Early termination: if we have enough high-quality results, stop
+		if len(results) >= limit*3 || batchCount < batchSize {
+			break
+		}
+		offset += batchSize
 	}
 
 	// Sort by similarity score descending
@@ -289,6 +306,87 @@ func (s *VectorStore) SearchMemory(ctx context.Context, queryEmbedding []float32
 	}
 
 	return entries, nil
+}
+
+// SearchMemoryWithEmbedding performs optimized vector search using pre-computed query embedding.
+// This avoids redundant embedding computation when the same query is used multiple times.
+func (s *VectorStore) SearchMemoryWithEmbedding(ctx context.Context, queryEmbedding []float32, limit int, minSimilarity float64) ([]VectorEntry, []float64, error) {
+	if s == nil || s.db == nil {
+		return nil, nil, errors.New("vector store not initialized")
+	}
+
+	if len(queryEmbedding) == 0 {
+		return nil, nil, errors.New("query embedding cannot be empty")
+	}
+
+	if limit <= 0 {
+		limit = 5
+	}
+	if minSimilarity <= 0 {
+		minSimilarity = s.config.MinSimilarity
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	queryVec := normalizeVectorF32(queryEmbedding)
+
+	type scoredEntry struct {
+		entry VectorEntry
+		score float64
+	}
+
+	// Use a heap for efficient top-K selection
+	results := make([]scoredEntry, 0, limit*2)
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, text, summary, role, embedding, token_count, created_at
+		FROM memory
+		WHERE embedding IS NOT NULL AND compressed = FALSE
+		ORDER BY importance_score DESC, created_at DESC
+		LIMIT ?
+	`, limit*10) // Fetch more candidates for better recall
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to query memories: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var entry VectorEntry
+		var embeddingBlob []byte
+		var createdAt time.Time
+
+		if err := rows.Scan(&entry.ID, &entry.Text, &entry.Summary, &entry.Role, &embeddingBlob, &entry.TokenCount, &createdAt); err != nil {
+			continue
+		}
+		entry.CreatedAt = createdAt
+
+		if len(embeddingBlob) > 0 {
+			entry.Embedding = bytesToFloat32Slice(embeddingBlob)
+			score := cosineSimilarityOptimized(queryVec, entry.Embedding)
+
+			if score >= minSimilarity {
+				results = append(results, scoredEntry{entry: entry, score: score})
+			}
+		}
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].score > results[j].score
+	})
+
+	if len(results) > limit {
+		results = results[:limit]
+	}
+
+	entries := make([]VectorEntry, len(results))
+	scores := make([]float64, len(results))
+	for i, r := range results {
+		entries[i] = r.entry
+		scores[i] = r.score
+	}
+
+	return entries, scores, nil
 }
 
 // RetrieveContext returns memory snippets optimized for context window limits.
@@ -587,9 +685,49 @@ func cosineSimilarityF32(a, b []float32) float64 {
 	return dot
 }
 
+// cosineSimilarityOptimized computes cosine similarity between a normalized query vector
+// and an unnormalized document vector. Uses SIMD-friendly loop unrolling.
+func cosineSimilarityOptimized(queryNormalized, doc []float32) float64 {
+	if len(queryNormalized) != len(doc) || len(queryNormalized) == 0 {
+		return 0
+	}
+
+	// Compute dot product and norm simultaneously
+	var dot, normSq float64
+	n := len(queryNormalized)
+
+	// Process 4 elements at a time for better CPU cache utilization
+	i := 0
+	for ; i <= n-4; i += 4 {
+		dot += float64(queryNormalized[i])*float64(doc[i]) +
+			float64(queryNormalized[i+1])*float64(doc[i+1]) +
+			float64(queryNormalized[i+2])*float64(doc[i+2]) +
+			float64(queryNormalized[i+3])*float64(doc[i+3])
+
+		normSq += float64(doc[i])*float64(doc[i]) +
+			float64(doc[i+1])*float64(doc[i+1]) +
+			float64(doc[i+2])*float64(doc[i+2]) +
+			float64(doc[i+3])*float64(doc[i+3])
+	}
+
+	// Handle remaining elements
+	for ; i < n; i++ {
+		dot += float64(queryNormalized[i]) * float64(doc[i])
+		normSq += float64(doc[i]) * float64(doc[i])
+	}
+
+	if normSq == 0 {
+		return 0
+	}
+
+	return dot / math.Sqrt(normSq)
+}
+
 func estimateTokens(text string) int {
-	// Rough estimation: ~4 chars per token for English
-	return len(text) / 4
+	// Use rune count for accurate non-ASCII handling
+	// Rough estimation: ~4 chars per token for English, ~2 for CJK
+	runeCount := len([]rune(text))
+	return runeCount / 4
 }
 
 func calculateImportance(text string, role string) float64 {

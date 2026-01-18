@@ -31,10 +31,20 @@ func newLlamaCppProvider(cfg config.LlamaCppEmbeddingConfig) (Provider, error) {
 		}
 	}
 
+	// Configure connection pooling for better performance
+	transport := &http.Transport{
+		MaxIdleConns:        10,
+		MaxIdleConnsPerHost: 10,
+		MaxConnsPerHost:     20,
+		IdleConnTimeout:     90 * time.Second,
+		DisableCompression:  false,
+		ForceAttemptHTTP2:   true,
+	}
+
 	return &llamaCppProvider{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		model:   strings.TrimSpace(cfg.Model),
-		client:  &http.Client{Timeout: timeout},
+		client:  &http.Client{Timeout: timeout, Transport: transport},
 	}, nil
 }
 

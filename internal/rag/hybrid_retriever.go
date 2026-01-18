@@ -2,11 +2,11 @@ package rag
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
 	"sync"
-	"fmt"
 	"time"
 
 	"OpenEye/internal/config"
@@ -18,35 +18,35 @@ type HybridRetrieverConfig struct {
 
 	MaxCandidates      int     // Number of candidates to consider before reranking
 	DiversityThreshold float64 // Minimum distance between selected documents (0-1)
-	
+
 	// Scoring weights
-	SemanticWeight   float64 // Weight for semantic similarity (0-1)
-	KeywordWeight    float64 // Weight for keyword matching (0-1)
-	RecencyWeight    float64 // Weight for document recency (0-1)
-	
+	SemanticWeight float64 // Weight for semantic similarity (0-1)
+	KeywordWeight  float64 // Weight for keyword matching (0-1)
+	RecencyWeight  float64 // Weight for document recency (0-1)
+
 	// Query expansion
 	EnableQueryExpansion bool
 	MaxQueryTerms        int
-	
+
 	// Result filtering
-	MinTokens       int // Minimum tokens per chunk
-	MaxTokens       int // Maximum tokens per chunk
+	MinTokens       int     // Minimum tokens per chunk
+	MaxTokens       int     // Maximum tokens per chunk
 	DedupeThreshold float64 // Similarity threshold for deduplication
 }
 
 func DefaultHybridRetrieverConfig(ragCfg config.RAGConfig) HybridRetrieverConfig {
 	return HybridRetrieverConfig{
-		RAGConfig:          ragCfg,
-		MaxCandidates:      50,
-		DiversityThreshold: 0.3,
-		SemanticWeight:     0.7,
-		KeywordWeight:      0.2,
-		RecencyWeight:      0.1,
+		RAGConfig:            ragCfg,
+		MaxCandidates:        50,
+		DiversityThreshold:   0.3,
+		SemanticWeight:       0.7,
+		KeywordWeight:        0.2,
+		RecencyWeight:        0.1,
 		EnableQueryExpansion: true,
-		MaxQueryTerms:      10,
-		MinTokens:          10,
-		MaxTokens:          500,
-		DedupeThreshold:    0.85,
+		MaxQueryTerms:        10,
+		MinTokens:            10,
+		MaxTokens:            500,
+		DedupeThreshold:      0.85,
 	}
 }
 
@@ -54,9 +54,18 @@ type HybridRetriever struct {
 	*FilesystemRetriever
 	config   HybridRetrieverConfig
 	embedder embedding.Provider
-	
-	queryCache     sync.Map
-	queryCacheTTL  time.Duration
+
+	queryCache    sync.Map
+	queryCacheTTL time.Duration
+
+	// Pre-tokenized document cache for BM25 optimization
+	docTokenCache sync.Map
+}
+
+// docTokens stores pre-tokenized document data for efficient BM25 scoring.
+type docTokens struct {
+	termFreq map[string]int
+	length   int
 }
 
 func NewHybridRetriever(cfg HybridRetrieverConfig, embedder embedding.Provider) (*HybridRetriever, error) {
@@ -124,29 +133,28 @@ func (r *HybridRetriever) Retrieve(ctx context.Context, query string, limit int)
 }
 
 type scoredDocument struct {
-	doc            Document
-	semanticScore  float64
-	keywordScore   float64
-	recencyScore   float64
-	combinedScore  float64
-	embedding      []float32
+	doc           Document
+	semanticScore float64
+	keywordScore  float64
+	recencyScore  float64
+	combinedScore float64
 }
 
 func (r *HybridRetriever) hybridScore(query string, candidates []Document) []scoredDocument {
 	queryTerms := extractKeywords(query)
-	
+
 	scored := make([]scoredDocument, 0, len(candidates))
-	
+
 	for _, doc := range candidates {
 		sd := scoredDocument{
 			doc:           doc,
 			semanticScore: doc.Score,
 		}
 
-		// Compute keyword score (BM25-like)
-		sd.keywordScore = computeKeywordScore(queryTerms, doc.Text)
+		// Compute keyword score using optimized BM25 with caching
+		sd.keywordScore = r.computeKeywordScoreOptimized(queryTerms, doc.ID, doc.Text)
 
-		// Compute recency score (assumes more recent = higher score, based on ID)
+		// Compute recency score
 		sd.recencyScore = computeRecencyScore(doc.ID)
 
 		// Combined weighted score
@@ -165,23 +173,70 @@ func (r *HybridRetriever) hybridScore(query string, candidates []Document) []sco
 	return scored
 }
 
+// computeKeywordScoreOptimized uses cached tokenization for better performance.
+func (r *HybridRetriever) computeKeywordScoreOptimized(queryTerms []string, docID, docText string) float64 {
+	if len(queryTerms) == 0 {
+		return 0
+	}
+
+	// Check cache for pre-tokenized document
+	var tokens *docTokens
+	if cached, ok := r.docTokenCache.Load(docID); ok {
+		tokens = cached.(*docTokens)
+	} else {
+		// Tokenize and cache
+		words := strings.Fields(strings.ToLower(docText))
+		termFreq := make(map[string]int)
+		for _, word := range words {
+			word = strings.Trim(word, ".,!?;:\"'()[]{}")
+			if len(word) >= 2 {
+				termFreq[word]++
+			}
+		}
+		tokens = &docTokens{
+			termFreq: termFreq,
+			length:   len(words),
+		}
+		r.docTokenCache.Store(docID, tokens)
+	}
+
+	// BM25 parameters
+	k1 := 1.5
+	b := 0.75
+	avgDocLen := 100.0
+
+	score := 0.0
+	for _, term := range queryTerms {
+		tf := float64(tokens.termFreq[term])
+		if tf > 0 {
+			docLen := float64(tokens.length)
+			numerator := tf * (k1 + 1)
+			denominator := tf + k1*(1-b+b*(docLen/avgDocLen))
+			score += numerator / denominator
+		}
+	}
+
+	return score / float64(len(queryTerms))
+}
+
 // mmrSelect uses Maximal Marginal Relevance to select diverse results.
+// Uses semantic score for diversity instead of expensive text re-tokenization.
 func (r *HybridRetriever) mmrSelect(candidates []scoredDocument, limit int) []Document {
 	if len(candidates) == 0 {
 		return nil
 	}
 
 	lambda := 0.7 // Balance between relevance and diversity
-	
+
 	selected := make([]Document, 0, limit)
-	selectedTexts := make([]string, 0, limit)
+	selectedScores := make([]float64, 0, limit)
 	remaining := make([]scoredDocument, len(candidates))
 	copy(remaining, candidates)
 
 	// Always select the top result first
 	if len(remaining) > 0 {
 		selected = append(selected, remaining[0].doc)
-		selectedTexts = append(selectedTexts, remaining[0].doc.Text)
+		selectedScores = append(selectedScores, remaining[0].semanticScore)
 		remaining = remaining[1:]
 	}
 
@@ -194,10 +249,13 @@ func (r *HybridRetriever) mmrSelect(candidates []scoredDocument, limit int) []Do
 			// Relevance term
 			relevance := cand.combinedScore
 
-			// Diversity term: max similarity to already selected
+			// Diversity term: use semantic score difference as proxy for diversity
+			// Higher difference = more diverse
 			maxSim := 0.0
-			for _, selText := range selectedTexts {
-				sim := textSimilarity(cand.doc.Text, selText)
+			for _, selScore := range selectedScores {
+				// Convert score difference to similarity (closer scores = more similar)
+				scoreDiff := math.Abs(cand.semanticScore - selScore)
+				sim := 1.0 - math.Min(scoreDiff*2, 1.0) // Scale to 0-1
 				if sim > maxSim {
 					maxSim = sim
 				}
@@ -214,8 +272,7 @@ func (r *HybridRetriever) mmrSelect(candidates []scoredDocument, limit int) []Do
 
 		if bestIdx >= 0 {
 			selected = append(selected, remaining[bestIdx].doc)
-			selectedTexts = append(selectedTexts, remaining[bestIdx].doc.Text)
-			// Remove selected from remaining
+			selectedScores = append(selectedScores, remaining[bestIdx].semanticScore)
 			remaining = append(remaining[:bestIdx], remaining[bestIdx+1:]...)
 		} else {
 			break
@@ -225,29 +282,75 @@ func (r *HybridRetriever) mmrSelect(candidates []scoredDocument, limit int) []Do
 	return selected
 }
 
-// deduplicate removes near-duplicate documents.
+// deduplicate removes near-duplicate documents using efficient hashing.
 func (r *HybridRetriever) deduplicate(docs []Document) []Document {
 	if len(docs) <= 1 {
 		return docs
 	}
 
 	result := make([]Document, 0, len(docs))
-	
+
+	// Use word set fingerprinting for faster comparison
+	type fingerprint struct {
+		words map[string]struct{}
+		doc   Document
+	}
+
+	fingerprints := make([]fingerprint, 0, len(docs))
+
 	for _, doc := range docs {
+		// Create word fingerprint
+		words := make(map[string]struct{})
+		for _, w := range strings.Fields(strings.ToLower(doc.Text)) {
+			words[w] = struct{}{}
+		}
+
 		isDupe := false
-		for _, existing := range result {
-			sim := textSimilarity(doc.Text, existing.Text)
+		for _, existing := range fingerprints {
+			sim := jaccardSimilarityOptimized(words, existing.words)
 			if sim > r.config.DedupeThreshold {
 				isDupe = true
 				break
 			}
 		}
+
 		if !isDupe {
 			result = append(result, doc)
+			fingerprints = append(fingerprints, fingerprint{words: words, doc: doc})
 		}
 	}
 
 	return result
+}
+
+// jaccardSimilarityOptimized computes Jaccard similarity with pre-computed word sets.
+func jaccardSimilarityOptimized(words1, words2 map[string]struct{}) float64 {
+	if len(words1) == 0 && len(words2) == 0 {
+		return 1.0
+	}
+	if len(words1) == 0 || len(words2) == 0 {
+		return 0.0
+	}
+
+	// Count intersection (iterate over smaller set)
+	intersection := 0
+	smaller, larger := words1, words2
+	if len(words1) > len(words2) {
+		smaller, larger = words2, words1
+	}
+
+	for w := range smaller {
+		if _, ok := larger[w]; ok {
+			intersection++
+		}
+	}
+
+	union := len(words1) + len(words2) - intersection
+	if union == 0 {
+		return 0
+	}
+
+	return float64(intersection) / float64(union)
 }
 
 func (r *HybridRetriever) RetrieveWithContext(ctx context.Context, query string, contextHints []string, limit int) ([]Document, error) {
@@ -262,7 +365,7 @@ func (r *HybridRetriever) RetrieveWithContext(ctx context.Context, query string,
 
 // RetrieveChunked retrieves documents and groups them by source.
 func (r *HybridRetriever) RetrieveChunked(ctx context.Context, query string, limit int, maxChunksPerSource int) (map[string][]Document, error) {
-	docs, err := r.Retrieve(ctx, query, limit*2) // Get more to allow grouping
+	docs, err := r.Retrieve(ctx, query, limit*2)
 	if err != nil {
 		return nil, err
 	}
@@ -278,11 +381,10 @@ func (r *HybridRetriever) RetrieveChunked(ctx context.Context, query string, lim
 	return grouped, nil
 }
 
-
 // extractKeywords extracts important terms from text.
 func extractKeywords(text string) []string {
 	words := strings.Fields(strings.ToLower(text))
-	
+
 	stopwords := map[string]bool{
 		"the": true, "a": true, "an": true, "is": true, "are": true,
 		"was": true, "were": true, "be": true, "been": true, "being": true,
@@ -299,9 +401,9 @@ func extractKeywords(text string) []string {
 		"so": true, "than": true, "too": true, "very": true, "just": true,
 	}
 
-	keywords := make([]string, 0)
+	keywords := make([]string, 0, len(words)/2)
 	seen := make(map[string]bool)
-	
+
 	for _, word := range words {
 		word = strings.Trim(word, ".,!?;:\"'()[]{}")
 		if len(word) < 2 {
@@ -320,42 +422,6 @@ func extractKeywords(text string) []string {
 	return keywords
 }
 
-// computeKeywordScore computes a BM25-like keyword matching score.
-func computeKeywordScore(queryTerms []string, docText string) float64 {
-	if len(queryTerms) == 0 {
-		return 0
-	}
-
-	docLower := strings.ToLower(docText)
-	docWords := strings.Fields(docLower)
-	docLen := float64(len(docWords))
-	avgDocLen := 100.0 // Assumed average
-	
-	k1 := 1.5
-	b := 0.75
-	
-	score := 0.0
-	for _, term := range queryTerms {
-		// Count term frequency
-		tf := 0.0
-		for _, word := range docWords {
-			if strings.Contains(word, term) {
-				tf++
-			}
-		}
-		
-		if tf > 0 {
-			// BM25 formula (simplified, assuming IDF = 1)
-			numerator := tf * (k1 + 1)
-			denominator := tf + k1*(1-b+b*(docLen/avgDocLen))
-			score += numerator / denominator
-		}
-	}
-
-	// Normalize by query length
-	return score / float64(len(queryTerms))
-}
-
 // computeRecencyScore computes a recency score based on document ID.
 func computeRecencyScore(docID string) float64 {
 	// Extract chunk number from ID (format: "path#N")
@@ -363,41 +429,13 @@ func computeRecencyScore(docID string) float64 {
 	if len(parts) < 2 {
 		return 0.5
 	}
-	// Higher chunk numbers are assumed to be more recent (or just return base score)
 	return 0.5
-}
-
-// textSimilarity computes a simple text similarity using Jaccard index.
-func textSimilarity(text1, text2 string) float64 {
-	words1 := make(map[string]bool)
-	for _, w := range strings.Fields(strings.ToLower(text1)) {
-		words1[w] = true
-	}
-	
-	words2 := make(map[string]bool)
-	for _, w := range strings.Fields(strings.ToLower(text2)) {
-		words2[w] = true
-	}
-
-	intersection := 0
-	for w := range words1 {
-		if words2[w] {
-			intersection++
-		}
-	}
-
-	union := len(words1) + len(words2) - intersection
-	if union == 0 {
-		return 0
-	}
-
-	return float64(intersection) / float64(union)
 }
 
 // expandQueryWithContext expands the query with relevant terms from context.
 func expandQueryWithContext(query string, contextHints []string, maxTerms int) string {
 	queryTerms := extractKeywords(query)
-	
+
 	// Extract additional terms from context
 	contextTerms := make(map[string]int)
 	for _, hint := range contextHints {
@@ -443,14 +481,11 @@ func expandQueryWithContext(query string, contextHints []string, maxTerms int) s
 
 // CrossEncoderReranker provides neural reranking (placeholder for future implementation).
 type CrossEncoderReranker struct {
-	// Would hold a cross-encoder model for reranking
 	enabled bool
 }
 
 // Rerank reranks documents using a cross-encoder (placeholder).
 func (r *CrossEncoderReranker) Rerank(ctx context.Context, query string, docs []Document) ([]Document, error) {
-	// Placeholder - would use a cross-encoder model
-	// For now, just return as-is
 	return docs, nil
 }
 
@@ -473,7 +508,6 @@ func (m *ChunkMerger) MergeAdjacent(docs []Document) []Document {
 		return docs
 	}
 
-	// Group by source
 	bySource := make(map[string][]Document)
 	for _, doc := range docs {
 		bySource[doc.Source] = append(bySource[doc.Source], doc)
@@ -481,21 +515,17 @@ func (m *ChunkMerger) MergeAdjacent(docs []Document) []Document {
 
 	merged := make([]Document, 0, len(docs))
 	for source, chunks := range bySource {
-		// Sort chunks by ID (which contains chunk index)
 		sort.Slice(chunks, func(i, j int) bool {
 			return chunks[i].ID < chunks[j].ID
 		})
 
-		// Merge adjacent chunks
 		current := chunks[0]
 		currentTokens := estimateTokenCount(current.Text)
 
 		for i := 1; i < len(chunks); i++ {
 			nextTokens := estimateTokenCount(chunks[i].Text)
-			
-			// Check if chunks are adjacent (consecutive IDs) and fit in limit
+
 			if isAdjacent(current.ID, chunks[i].ID) && currentTokens+nextTokens <= m.maxMergedTokens {
-				// Merge
 				current.Text = current.Text + "\n\n" + chunks[i].Text
 				current.Score = math.Max(current.Score, chunks[i].Score)
 				currentTokens += nextTokens
@@ -506,10 +536,9 @@ func (m *ChunkMerger) MergeAdjacent(docs []Document) []Document {
 			}
 		}
 		merged = append(merged, current)
-		_ = source // Avoid unused variable warning
+		_ = source
 	}
 
-	// Re-sort by score
 	sort.Slice(merged, func(i, j int) bool {
 		return merged[i].Score > merged[j].Score
 	})
@@ -519,19 +548,17 @@ func (m *ChunkMerger) MergeAdjacent(docs []Document) []Document {
 
 // isAdjacent checks if two chunk IDs are adjacent.
 func isAdjacent(id1, id2 string) bool {
-	// Format: "path#N"
 	parts1 := strings.Split(id1, "#")
 	parts2 := strings.Split(id2, "#")
-	
+
 	if len(parts1) != 2 || len(parts2) != 2 {
 		return false
 	}
-	
-	if parts1[0] != parts2[0] { // Different files
+
+	if parts1[0] != parts2[0] {
 		return false
 	}
 
-	// Parse chunk indices
 	var idx1, idx2 int
 	if _, err := fmt.Sscanf(parts1[1], "%d", &idx1); err != nil {
 		return false
@@ -543,7 +570,7 @@ func isAdjacent(id1, id2 string) bool {
 	return idx2 == idx1+1
 }
 
-// estimateTokenCount estimates token count for text.
+// estimateTokenCount estimates token count for text using rune count for accuracy.
 func estimateTokenCount(text string) int {
-	return len(text) / 4 // Rough estimate
+	return len([]rune(text)) / 4
 }
