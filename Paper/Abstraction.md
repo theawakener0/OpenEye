@@ -4,14 +4,18 @@
 
 We introduce a transformative concept in AI wearables: an open-source, pluggable,
 smart glasses framework designed to redefine the boundaries of human and machine
-interaction. Unlike conventional smart glasses, which operate as closed systems dependenton
+interaction. Unlike conventional smart glasses, which operate as closed systems dependent
 on cloud infrastructure, this project proposes a free, extensible, and offline architecture
 engineered to revolutionize AI integration in small scale devices.
 
-Central to this innovation is a novel computational architecture that enables small
+Central to this innovation is a novel computational architecture that enables Small
 Language Models (SLMs) to surpass Large Language Models (LLMs) in efficiency and
 contextual adaptability. By optimizing model performance directly on device, the system
 minimizes latency, enhances privacy, and enables seamless functionality without internet dependence.
+
+Our primary technical contribution is **Omem (OpenEye Memory)**, a four-pillar memory architecture designed specifically for edge-based SLMs.
+
+Our analysis demonstrates that the SLM-LLM capability gap can be substantially narrowed through architectural innovation rather than parameter scaling. By decoupling knowledge from model size—preserving intelligence on the edge while offloading knowledge to efficient vectorized storage—OpenEye enables LLM-competitive performance on commodity hardware including Raspberry Pi 4 (4GB) and Raspberry Pi 5.
 
 This approach not only reimagines the purpose and design of smart glasses but also
 establishes the foundation for a broader AI framework optimized for edge computing.

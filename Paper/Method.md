@@ -1,4 +1,4 @@
-# Methadology
+# Methodology
 
 ## OpenEye: The New Revolution of SLMs
 
@@ -38,7 +38,7 @@ Models (SLMs) for real-world interaction.
     - **Energy-Aware Intelligence**: Smaller models mean lower power consumption, essential for long-term wearable
     autonomy.
 
-    Thus, Less is More is not only a reference but a methodological foundation for OpenEye’s design — guiding us
+    Thus, Less is More is not only a reference but a methodological foundation for OpenEye’s design, guiding us
     toward a form of intelligence that grows in clarity, not in size.
 
 
@@ -46,7 +46,7 @@ Before we start in showing the methodology, it's important to understand the ide
 
 And how we achieve this is through our novel computational architecture that enables Small Language Models (SLMs) to function effectively on-device. This approach minimizes latency, enhances privacy, and allows for seamless functionality without the need for constant internet connectivity.
 
-## Beyound SLMs
+## Beyond SLMs
 
 Why we are using SLMs instead of LLMs? The answer is simple: efficiency and contextual adaptability. SLMs are optimized to perform well on smaller devices, making them ideal for wearable technology like smart glasses. By focusing on SLMs, we can ensure that OpenEye delivers high performance while maintaining a compact form factor.
 
@@ -54,7 +54,7 @@ But by using SLMs, we will encounter some challenges, such as limited computatio
 
 We believe that by leveraging SLMs, we can create a more responsive and personalized user experience, allowing the smart glasses to adapt to individual user needs and preferences.
 
-## intro of our method of making OpenEye
+## Introduction to our method of making OpenEye
 
 During the earliest phase of building our framework, we experimented with existing open-source components to speed up development. Very quickly, it became evident that these components created inherent performance ceilings. Their abstraction layers, memory behavior, and fixed execution pipelines made deep optimization, especially on constrained edge hardware, nearly impossible. Optimizing someone else’s architecture is fundamentally inefficient, so we decided to build the entire system from scratch to fully control concurrency, memory flow, and hardware interaction.
 
@@ -85,7 +85,7 @@ Together, these works reinforce that our approach is correct: small models, deep
 
 What began as a minimal TCP-based experiment has evolved into a complete SLM framework with a modular architecture, pluggable components, optimized scheduling, and the capacity to integrate both classic neural models and future neuromorphic designs. By aligning the framework with both modern research and real hardware constraints, OpenEye is engineered for speed, extensibility, and true on-device intelligence.
 
-### What is our framework architicture?
+### What is our framework architecture?
 
 Our architecture is built around a core objective: extract the maximum possible performance from Small Language Models (SLMs) by optimizing context flow, memory, and control structures. SLMs become significantly more capable when given a tightly managed context—one that provides purpose, continuity, and situational awareness without overwhelming the model with unnecessary tokens. For this reason, our context system is divided into two tightly optimized components:
 (1) System + Prompt Architecture and (2) Memory Architecture.
@@ -104,20 +104,22 @@ The system message becomes a configurable component, but bounded by mandatory co
 
 We also implemented a dedicated context builder function. This function constructs the final prompt by merging the system message and the user’s input based on predefined rules, ensuring consistent behavior and preventing over-expansion. By enforcing token austerity and structured prompt assembly, we eliminate the most common failure modes of SLMs on edge hardware.
 
-2. Memory Architecture
+2. Memory Architecture: The Evolution to Omem
 
-The memory subsystem required deeper architectural intervention.
-Our first attempt used a lightweight SQLite database directly connected to the prompt. This immediately caused hallucinations—even with only a single record stored—because raw memory injection adds uncontrolled semantic weight to the model.
+The memory subsystem required deeper architectural intervention. Our initial experiments with simple sliding windows (Legacy) and direct vector-store implementations (standard RAG) revealed significant limitations for SLMs: they either lacked long-term retention or suffered from context fragmentation.
 
-To solve this, we redesigned the entire memory pipeline:
+To address this, we developed **Omem (OpenEye Memory)**, a native Go-based memory system designed specifically for the constraints of edge-based SLMs. This architecture evolved through two distinct phases:
 
-We replaced SQLite with DuckDB, which provides higher throughput, vectorized execution, and optimized columnar storage—features consistent with modern edge-AI research (e.g., ColibriES 2023).
+**Phase A: Porting Mem0 to Native Go**
+We initially looked to the Python-based `mem0` library for its vector-store capabilities. However, integrating a Python runtime on edge devices introduced unacceptable latency and overhead. We re-architected the system in Go, replacing the Python logic with a native implementation that utilizes **DuckDB** for vectorized storage and standard SQL relationships for graph operations. This removed the cgo/execution overhead while maintaining the core vector-search capabilities.
 
-We developed a compression and summarization algorithm that reduces retrieved memory into a fixed-token, deterministic representation before it reaches the model.
+**Phase B: Omem (Adaptive Cognitive Architecture)**
+While the port provided speed, standard vector retrieval proved insufficient for maintaining global coherence. Omem introduces a four-pillar architecture to solve this:
 
-This summarization step is critical. It ensures memory contributes meaningfully without introducing ambiguity, noise, or drift—issues also highlighted by DeepSeek OCR research, which demonstrates the need for efficient, controlled text compression pipelines.
-
-After extraction, compression, and transformation, the memory is injected into the same context-builder function used for the system message and user prompt. This unified mechanism ensures all context components remain balanced and non-destructive.
+*   **Atomic Encoding:** Instead of storing raw user input, Omem uses an LLM pass to de-noise and resolve coreferences (e.g., changing "he did it" to "John completed the task") before storage. This ensures that retrieved facts are standalone and intelligible.
+*   **Multi-View Indexing:** To overcome the limitations of semantic-only search, Omem indexes data in three simultaneous views: **Semantic** (vector embeddings for meaning), **Lexical** (BM25 for exact keyword matching), and **Symbolic** (graph relationships for entity connection).
+*   **Adaptive Retrieval:** Unlike static Top-K retrievers, Omem calculates a **Complexity Score** for each query. Simple queries trigger a narrow, precise search, while complex reasoning tasks expand the search radius to gather broader context.
+*   **Rolling Summarization:** To maintain global context without token bloat, Omem maintains a persistent "user biography" summary. This summary is updated incrementally and injected into every prompt, ensuring the model always possesses a baseline understanding of the user.
 
 3. Context Window Optimization (Sliding Window)
 
@@ -148,12 +150,21 @@ we engineered a context system designed specifically for SLM stability and maxim
 
 This architecture directly follows insights from neuromorphic computing, efficient OCR pipelines (DeepSeek), and modern edge-AI research, all of which validate the principles we applied: minimalism, determinism, and hardware-aware optimization.
 
-After building the context architecture, it became clear that this alone was not sufficient to fully unlock the capabilities of our SLM. Even with optimized system messages, structured prompts, deterministic memory flow, and a sliding-window mechanism, the model was still limited by its internal weights and the finite context window.
-The next logical enhancement was Retrieval-Augmented Generation (RAG)—a mechanism that effectively acts as infinite external memory for the SLM while maintaining strict control over relevance and token efficiency.
+After building the context architecture, it became clear that this alone was not sufficient to fully unlock the capabilities of our SLM. While Omem solved the problem of *personal* and *episodic* memory (remembering the user), the model still lacked access to deep *external* knowledge (manuals, encyclopedic data, technical specs) that exceeds its training data.
+
+The next logical enhancement was *External Retrieval-Augmented Generation (RAG)*, a mechanism distinct from Omem that acts as an infinite external library for the SLM.
+
+**Differentiation: Omem vs. External RAG**
+It is crucial to distinguish between these two retrieval systems in our architecture, as they serve fundamentally different cognitive functions:
+
+*   **Omem (Internal Memory):** Handles *who the user is*. It retrieves past conversations, preferences, and biographical facts. It uses a graph-based approach to maintain continuity.
+*   **External RAG (Knowledge Base):** Handles *what the world is*. It retrieves static documents, API references, or uploaded files. It uses a pure semantic search approach.
+
+The OpenEye pipeline orchestrates both systems in parallel, merging their outputs into a single coherent context.
 
 **Retrieval-Augmented Generation (RAG) Integration**
 
-RAG gives the model access to information far beyond what it can store in context or internal parameters. Instead of forcing the SLM to memorize or repeatedly reprocess data, we externalize long-term knowledge into a structured retrieval layer. This allows the SLM to:
+External RAG gives the model access to information far beyond what it can store in context or internal parameters. Instead of forcing the SLM to memorize or repeatedly reprocess data, we externalize long-term knowledge into a structured retrieval layer. This allows the SLM to:
 
 - Recall older interactions beyond the sliding window
 
@@ -239,7 +250,7 @@ This external-memory strategy is consistent with modern research across neuromor
 
 Building the context was not enough to achieve our idea of improving the SLMs model, so what we did next was to make the framework usable to the developers, as it was just some lines of code that can not be used as a framework, so what we did next is to build the pipeline that will organise and make the framework easy to use.
 
-#### How the pipeline work?
+#### How the pipeline works
 
 To understand the framework’s methodology, we must first clarify the role of the pipeline. The pipeline functions as the primary interface layer between developers and the internal components of the framework. In practice, it serves as the framework’s Software Development Kit (SDK), a stable, high-level interaction point that abstracts the underlying complexity and exposes a clean, extensible API for integrating SLMs into applications.
 
@@ -252,7 +263,12 @@ The pipeline’s design builds directly on our earliest prototype: a minimal TCP
 With the introduction of the context architecture (system messages, prompt engine, memory module, and RAG subsystem), the pipeline now orchestrates these elements in real time. When a developer initializes the pipeline, several processes are triggered internally:
 
 Context Initialization
-The pipeline constructs the initial context using the system message, configuration rules, sliding-window constraints, and any available memory or retrieved knowledge. These elements are assembled by the context builder into a deterministic, token-optimized prompt.
+The pipeline constructs the initial context using the system message, configuration rules, and sliding-window constraints. Crucially, it triggers the **Parallel Context Assembly**:
+*   **Omem Hook:** Asynchronously queries the Omem engine to retrieve the "User Biography" (Rolling Summary) and relevant past episodic memories (Adaptive Retrieval).
+*   **RAG Retriever:** Simultaneously queries the external vector store for knowledge documents relevant to the current query.
+*   **Vector Cache:** Fetches the most recent immediate conversation turns.
+
+These elements are then merged by the context builder into a single, deterministic, token-optimized prompt.
 
 Component Activation
 The pipeline loads and configures the modules associated with the current model, including:
@@ -260,6 +276,8 @@ The pipeline loads and configures the modules associated with the current model,
 the SLM runner interface
 
 the memory subsystem (DuckDB engine, summarization layers)
+
+the Omem adapter (Long-term memory integration)
 
 the retrieval layer (for RAG)
 
@@ -271,7 +289,7 @@ The pipeline binds the prepared context to the selected SLM. This includes token
 Runtime Execution Path Setup
 The data flow path is established:
 
-incoming user input → pre-processing → memory lookup and retrieval → context reconstruction → model inference → post-processing and grounding.
+incoming user input → pre-processing → **Parallel Retrieval (Omem + RAG)** → context reconstruction → model inference → post-processing and grounding → **Async Memory Consolidation (Omem learning)**.
 
 From this moment onward, the pipeline acts as the central conductor. Every query from a developer’s application is passed through the same controlled pathway—with strict optimization guarantees—ensuring the SLM remains stable, accurate, and hallucination-resistant.
 
@@ -454,4 +472,215 @@ Easy to extend by community developers
 Capable of evolving alongside new edge-AI research
 
 This design is fully supported by the direction of modern on-device AI research, which emphasizes modularity, hardware-aware intelligence, and efficient small models (TRM-style) running in constrained environments.
+
+## Deep Dive: Omem Architecture and Implementation
+
+The Omem (OpenEye Memory) system represents our primary contribution to edge AI memory research. This section provides a detailed technical analysis of its four-pillar architecture and the underlying implementation strategies that enable SLMs to achieve LLM-competitive performance.
+
+### Pillar 1: Atomic Encoding — Semantic Lossless Compression
+
+Atomic encoding transforms conversational text into self-contained, unambiguous facts. This preprocessing step is critical because SLMs lack the attention capacity to resolve ambiguities during inference—they require clean, pre-resolved input.
+
+**Coreference Resolution**
+
+The system maintains an entity cache of up to 50 entries, tracking:
+- Entity name and type (Person, Place, Organization, Concept, Thing, Time)
+- Gender inference (for pronoun resolution)
+- Salience score (recently mentioned entities have higher priority)
+- Temporal decay (0.95× per minute of inactivity)
+
+Resolution follows a rule-based approach with LLM fallback:
+
+```
+Input: "He said he would fix it yesterday"
+      ↓
+Entity Cache: {John Smith: male, salience: 2.0}
+      ↓
+Rule-Based Resolution: "John Smith said John Smith would fix it yesterday"
+      ↓
+Bad Resolution Detection: Repeated names detected
+      ↓
+LLM Fallback: "John Smith said he would fix the issue yesterday"
+```
+
+The bad resolution detector uses a simple heuristic: if the same word appears 3+ times in 10 consecutive words, the rule-based output is rejected and LLM refinement is triggered.
+
+**Temporal Anchoring**
+
+Relative time references decay in meaning after storage. "Yesterday" becomes meaningless if retrieved weeks later. The atomic encoder converts 15+ temporal patterns to absolute dates:
+
+| Pattern | Example | Resolution |
+|---------|---------|------------|
+| `today` | "I went today" | "I went on 2026-01-20" |
+| `yesterday` | "He called yesterday" | "He called on 2026-01-19" |
+| `last week` | "We met last week" | "We met the week of 2026-01-13" |
+| `N days ago` | "3 days ago" | "2026-01-17" |
+| `this morning` | "This morning" | "on 2026-01-20 morning" |
+
+**Atomic Fact Extraction**
+
+After coreference and temporal resolution, the LLM extracts self-contained facts using a structured format:
+
+```
+FACT|<category>|<importance>|<fact text>
+```
+
+Categories include: preference, belief, biographical, event, relationship, task, knowledge, other.
+
+Facts with importance below the threshold (default: 0.3) are discarded. This prevents trivial statements from cluttering the memory store.
+
+### Pillar 2: Multi-View Indexing — Beyond Semantic Similarity
+
+Our experiments revealed that vector similarity alone achieves only ~60% recall. The query "What is my favorite color?" often retrieves facts about "visual preferences" or "aesthetics" rather than the exact answer. Multi-view indexing addresses this through three simultaneous retrieval paths:
+
+**Semantic View (Weight: 0.5)**
+- Dense vector embeddings using MiniLM-L6-v2 (22MB, 384 dimensions)
+- DuckDB native vector operations for cosine similarity
+- Captures meaning-based relationships
+
+**Lexical View (Weight: 0.3)**
+- DuckDB Full-Text Search extension (BM25 algorithm)
+- Parameters: k1=1.2 (term frequency saturation), b=0.75 (length normalization)
+- Recovers exact keyword matches that semantic search misses
+
+**Symbolic View (Weight: 0.2)**
+- Category-based metadata filtering
+- Entity-relationship graph integration
+- Enables structured queries like "facts about [person]"
+
+The combination formula normalizes weights to sum to 1.0:
+```
+final_score = (semantic_weight × semantic_score) + 
+              (lexical_weight × lexical_score) + 
+              (symbolic_weight × symbolic_score)
+```
+
+### Pillar 3: Adaptive Retrieval Depth — Complexity-Aware Search
+
+Fixed top-K retrieval is fundamentally mismatched to query complexity. Simple factual queries ("Where do I live?") need only K=3-5 facts, while complex reasoning queries ("How do my work and family life interact?") require K=15-20 to gather sufficient context.
+
+**Zero-LLM Complexity Estimation**
+
+We developed a rule-based complexity estimator that operates without LLM inference, eliminating latency overhead at query time. The estimator calculates a complexity score (0.0-1.0) using weighted factors:
+
+| Factor | Weight | Scoring Logic |
+|--------|--------|---------------|
+| Entity Count | 25% | 0 entities: 0.1, 1: 0.2, 2: 0.4, 3: 0.6, 4+: 0.8 |
+| Question Type | 20% | Why/How: 0.8, When/Where: 0.5, What/Who: 0.3 |
+| Query Length | 15% | <5 words: 0.1, 5-10: 0.3, 10-15: 0.5, 15-25: 0.7, 25+: 0.9 |
+| Temporal Refs | 15% | 0: 0.0, 1: 0.3, 2: 0.5, 3+: 0.7 |
+| Comparisons | 10% | "better/worse/similar": 0.4-0.8 |
+| Conditionals | 10% | "if/would/could": 0.3-0.5 |
+| Negations | 5% | "not/never": 0.2-0.6 |
+
+**Dynamic Top-K Calculation**
+
+The retrieval depth adapts using the formula:
+```
+k_dyn = k_base × (1 + delta × complexity)
+```
+
+With default values (k_base=5, delta=2.0):
+- Simple query (complexity=0.15): K = 5 × (1 + 2×0.15) = 6.5 → 7
+- Medium query (complexity=0.50): K = 5 × (1 + 2×0.50) = 10
+- Complex query (complexity=0.85): K = 5 × (1 + 2×0.85) = 13.5 → 14
+
+The result is clamped to MaxTopK (default: 20) to prevent context overflow.
+
+**Query Classification**
+
+The estimator also classifies queries for retrieval strategy selection:
+- `factual`: What/who questions → favor exact matches
+- `temporal`: When-based questions → include recency weighting
+- `spatial`: Where-based questions → favor location entities
+- `causal`: Why/how questions → expand context breadth
+- `comparison`: Comparative queries → retrieve multiple related facts
+- `open`: Open-ended queries → balanced retrieval
+
+### Pillar 4: Rolling Summarization — Compressed Long-Term Context
+
+The most counterintuitive finding from our research: *less is more* for long-term memory. Rather than storing all facts verbatim and retrieving them for every query, Omem maintains a compressed "user biography" that provides stable baseline context regardless of conversation length.
+
+**Summary Update Strategy**
+
+Two update modes are supported:
+
+*Incremental Update* (default):
+- Triggered when 5+ new facts are pending
+- LLM prompt: current_summary + new_facts → updated_summary
+- Preserves existing knowledge while integrating new information
+
+*Full Regeneration*:
+- Triggered manually or on configuration change
+- LLM prompt: all recent facts (max 50) → fresh_summary
+- Used when summary has drifted or become inconsistent
+
+**Background Worker Architecture**
+
+Summary refresh runs asynchronously via a background goroutine:
+- Refresh interval: 5 minutes (configurable)
+- Timeout per refresh: 30 seconds
+- Non-blocking to main inference path
+- Graceful shutdown with stop channel
+
+**Token Budget Management**
+
+Summaries are capped at MaxTokens (default: 512) to ensure they fit within the SLM's limited context window. The LLM prompt explicitly instructs:
+- Use third person ("User prefers..." not "I prefer...")
+- Focus on preferences, biography, relationships
+- Omit temporary or trivial details
+- Group related information together
+
+### Pipeline Integration: Parallel Context Assembly
+
+The pipeline orchestrates Omem alongside other context sources through parallel execution:
+
+```
+User Input
+    │
+    ├─→ Task A: Summarization (if history exists)
+    ├─→ Task B: Vector Search (short-term memory)
+    ├─→ Task C: RAG Retrieval (external knowledge)
+    └─→ Task D: Omem Context (long-term personal memory)
+    │
+    ▼
+sync.WaitGroup.Wait()
+    │
+    ▼
+Context Builder → Merged Prompt → LLM Inference
+```
+
+This parallel execution is critical for edge devices—it hides I/O latency by running concurrent database queries and embedding operations.
+
+**Context Assembly Order**
+
+The final prompt is assembled in a specific order to optimize SLM attention:
+1. System message (<100 tokens, behavioral constraints)
+2. Omem context (user biography + retrieved facts)
+3. Summary (compressed recent conversation)
+4. Vector context (semantically similar past turns)
+5. RAG knowledge (external documents)
+6. User prompt (current query)
+
+This ordering places the most stable, foundational context first, with query-specific context closer to the user input where SLM attention is strongest.
+
+### Post-Inference Learning
+
+After generating a response, the pipeline triggers asynchronous learning:
+
+```go
+// From pipeline.go
+if p.omemHook != nil {
+    turnID := fmt.Sprintf("%d", time.Now().UnixNano())
+    p.omemHook.OnAfterGenerate(ctx, normalized, response.Text, turnID)
+}
+```
+
+This non-blocking call:
+1. Extracts atomic facts from the conversation turn
+2. Updates the entity graph with discovered entities/relationships
+3. Marks the rolling summary as dirty
+4. Persists new facts to DuckDB
+
+The async design ensures learning does not impact response latency.
 

@@ -62,34 +62,71 @@ func (p *Pipeline) processImages(ctx context.Context, inputs []string) ([]string
 		return nil, nil
 	}
 
+	// Double check cache for each input before hitting the processor
+	results := make([]string, 0, len(inputs))
+	toProcess := make([]string, 0)
+	processIndices := make([]int, 0)
+
+	for i, input := range inputs {
+		// Use a simple hash of the input (path or base64) to avoid long keys
+		hasher := sha256.New()
+		hasher.Write([]byte(input))
+		key := hex.EncodeToString(hasher.Sum(nil))
+
+		if cached, ok := p.imageCache.Load(key); ok {
+			results = append(results, cached.(string))
+		} else {
+			results = append(results, "") // Placeholder
+			toProcess = append(toProcess, input)
+			processIndices = append(processIndices, i)
+		}
+	}
+
+	if len(toProcess) == 0 {
+		return results, nil
+	}
+
 	// If no processor configured, return inputs as-is
 	if p.imageProcessor == nil {
 		return inputs, nil
 	}
 
-	processed, err := p.imageProcessor.ProcessMultiple(ctx, inputs)
+	processed, err := p.imageProcessor.ProcessMultiple(ctx, toProcess)
 	if err != nil {
-		// Return original inputs on error, but log the warning
-		return inputs, err
+		// Fallback for failed items
+		for i, idx := range processIndices {
+			results[idx] = toProcess[i]
+		}
+		return results, err
 	}
 
-	// Convert processed images to the format expected by the runtime
-	// llama.cpp expects raw base64 data, not data URIs
-	result := make([]string, 0, len(processed))
-	for _, img := range processed {
+	for i, img := range processed {
+		idx := processIndices[i]
 		if img == nil {
+			results[idx] = toProcess[i]
 			continue
 		}
-		// Return raw base64 data for llama.cpp
+
+		var finalVal string
 		if img.Base64 != "" {
-			result = append(result, img.Base64)
+			finalVal = img.Base64
 		} else if img.OriginalPath != "" {
-			// Fall back to original path if available
-			result = append(result, img.OriginalPath)
+			finalVal = img.OriginalPath
+		}
+
+		if finalVal != "" {
+			results[idx] = finalVal
+			// Cache it
+			hasher := sha256.New()
+			hasher.Write([]byte(toProcess[i]))
+			key := hex.EncodeToString(hasher.Sum(nil))
+			p.imageCache.Store(key, finalVal)
+		} else {
+			results[idx] = toProcess[i]
 		}
 	}
 
-	return result, nil
+	return results, nil
 }
 
 func initialiseRetriever(cfg config.Config, embedder embedding.Provider) (rag.Retriever, error) {

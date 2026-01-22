@@ -49,6 +49,7 @@ type Pipeline struct {
 	responseCache  sync.Map // Simple in-memory cache
 	summarizer     summarizer
 	imageProcessor image.Processor
+	imageCache     sync.Map
 
 	// Omem long-term memory integration
 	omemAdapter *omem.Adapter

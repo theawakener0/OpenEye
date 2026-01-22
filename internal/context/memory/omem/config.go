@@ -595,3 +595,140 @@ func (c *Config) String() string {
 		c.Summary.Enabled,
 	)
 }
+
+// ============================================================================
+// ABLATION STUDY PRESETS
+// These configurations are used for research benchmarking to isolate the
+// contribution of each Omem component.
+// ============================================================================
+
+// AblationPreset identifies a specific ablation configuration.
+type AblationPreset string
+
+const (
+	// AblationFull enables all Omem features (baseline)
+	AblationFull AblationPreset = "full"
+
+	// AblationNoAtomicEncoder disables atomic encoding (raw text storage)
+	AblationNoAtomicEncoder AblationPreset = "no_atomic_encoder"
+
+	// AblationSemanticOnly uses only vector similarity (no BM25, no graph)
+	AblationSemanticOnly AblationPreset = "semantic_only"
+
+	// AblationNoGraph disables entity graph
+	AblationNoGraph AblationPreset = "no_graph"
+
+	// AblationNoSummary disables rolling summary
+	AblationNoSummary AblationPreset = "no_summary"
+
+	// AblationFixedK disables complexity estimation (fixed top-K)
+	AblationFixedK AblationPreset = "fixed_k"
+
+	// AblationNoEpisodes disables session/episode tracking
+	AblationNoEpisodes AblationPreset = "no_episodes"
+
+	// AblationMinimal disables all advanced features (vector-only baseline)
+	AblationMinimal AblationPreset = "minimal"
+)
+
+// AblationConfig returns a Config modified for the specified ablation preset.
+// This is used for research benchmarking to measure the contribution of each component.
+func AblationConfig(preset AblationPreset) Config {
+	base := DefaultConfig()
+
+	switch preset {
+	case AblationFull:
+		// All features enabled (default)
+		return base
+
+	case AblationNoAtomicEncoder:
+		// Disable atomic encoding - store raw text without denoising
+		base.AtomicEncoder.Enabled = false
+		base.AtomicEncoder.EnableCoreference = false
+		base.AtomicEncoder.EnableTemporal = false
+		return base
+
+	case AblationSemanticOnly:
+		// Vector similarity only - no BM25, no graph
+		base.MultiViewIndex.SemanticWeight = 1.0
+		base.MultiViewIndex.LexicalWeight = 0.0
+		base.MultiViewIndex.SymbolicWeight = 0.0
+		base.EntityGraph.Enabled = false
+		base.Storage.EnableFTS = false
+		return base
+
+	case AblationNoGraph:
+		// Disable entity graph
+		base.EntityGraph.Enabled = false
+		base.MultiViewIndex.SymbolicWeight = 0.0
+		// Re-normalize weights
+		base.MultiViewIndex.SemanticWeight = 0.625 // 0.5 / (0.5+0.3)
+		base.MultiViewIndex.LexicalWeight = 0.375  // 0.3 / (0.5+0.3)
+		return base
+
+	case AblationNoSummary:
+		// Disable rolling summary
+		base.Summary.Enabled = false
+		return base
+
+	case AblationFixedK:
+		// Disable complexity estimation - fixed top-K
+		base.Retrieval.EnableComplexityEstimation = false
+		base.Retrieval.DefaultTopK = 10 // Fixed at 10
+		base.Retrieval.ComplexityDelta = 0.0
+		return base
+
+	case AblationNoEpisodes:
+		// Disable episode/session tracking
+		base.Episodes.Enabled = false
+		return base
+
+	case AblationMinimal:
+		// Minimal configuration - vector-only baseline
+		base.AtomicEncoder.Enabled = false
+		base.MultiViewIndex.SemanticWeight = 1.0
+		base.MultiViewIndex.LexicalWeight = 0.0
+		base.MultiViewIndex.SymbolicWeight = 0.0
+		base.EntityGraph.Enabled = false
+		base.Summary.Enabled = false
+		base.Episodes.Enabled = false
+		base.Retrieval.EnableComplexityEstimation = false
+		base.Storage.EnableFTS = false
+		return base
+
+	default:
+		return base
+	}
+}
+
+// GetAblationPresets returns all available ablation presets.
+func GetAblationPresets() []AblationPreset {
+	return []AblationPreset{
+		AblationFull,
+		AblationNoAtomicEncoder,
+		AblationSemanticOnly,
+		AblationNoGraph,
+		AblationNoSummary,
+		AblationFixedK,
+		AblationNoEpisodes,
+		AblationMinimal,
+	}
+}
+
+// AblationDescription returns a human-readable description of an ablation preset.
+func AblationDescription(preset AblationPreset) string {
+	descriptions := map[AblationPreset]string{
+		AblationFull:            "Full Omem: All features enabled (baseline)",
+		AblationNoAtomicEncoder: "No Atomic Encoder: Raw text storage without coreference/temporal resolution",
+		AblationSemanticOnly:    "Semantic Only: Vector similarity only (no BM25, no entity graph)",
+		AblationNoGraph:         "No Graph: Disable entity relationship graph",
+		AblationNoSummary:       "No Summary: Disable rolling user biography summary",
+		AblationFixedK:          "Fixed K: Disable complexity estimation, use fixed top-K=10",
+		AblationNoEpisodes:      "No Episodes: Disable session/episode tracking",
+		AblationMinimal:         "Minimal: Vector-only baseline (all advanced features disabled)",
+	}
+	if desc, ok := descriptions[preset]; ok {
+		return desc
+	}
+	return string(preset)
+}

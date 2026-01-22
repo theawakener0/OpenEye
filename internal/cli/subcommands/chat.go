@@ -27,9 +27,16 @@ func RunChat(ctx context.Context, cfg config.Config, registry runtime.Registry, 
 
 	start := time.Now()
 	options := pipeline.Options{}
+	
+	var spinnerDone chan struct{}
 	if opts.Stream {
 		options.Stream = true
 		options.StreamCallback = func(evt runtime.StreamEvent) error {
+			if spinnerDone != nil {
+				close(spinnerDone)
+				spinnerDone = nil
+				fmt.Print("\r\033[K") // Clear spinner line
+			}
 			if evt.Err != nil {
 				return evt.Err
 			}
@@ -41,7 +48,11 @@ func RunChat(ctx context.Context, cfg config.Config, registry runtime.Registry, 
 			os.Stdout.Sync() // Flush immediately
 			return nil
 		}
+	} else {
+		spinnerDone = make(chan struct{})
+		go runCLISpinner(spinnerDone, "Thinking")
 	}
+
 	options.DisableRAG = opts.DisableRAG
 	options.DisableSummary = opts.DisableSummary
 	options.DisableVectorMemory = opts.DisableVectorMemory
@@ -49,6 +60,12 @@ func RunChat(ctx context.Context, cfg config.Config, registry runtime.Registry, 
 	options.MemoryLimit = opts.MemoryLimit
 
 	result, err := pipe.Respond(ctx, message, image, options)
+	
+	if spinnerDone != nil {
+		close(spinnerDone)
+		fmt.Print("\r\033[K") // Clear spinner line
+	}
+
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "runtime error: %v\n", err)
 		return 1
@@ -62,20 +79,20 @@ func RunChat(ctx context.Context, cfg config.Config, registry runtime.Registry, 
 	
 	// Show detailed statistics if requested
 	if opts.ShowStats {
-		fmt.Println("\n--- Statistics ---")
+		fmt.Println("\n\033[1;90m--- Statistics ---\033[0m")
 		if result.Stats.TokensEvaluated > 0 || result.Stats.TokensGenerated > 0 || result.Stats.TokensCached > 0 {
-			fmt.Printf("Tokens: eval=%d gen=%d cached=%d\n", result.Stats.TokensEvaluated, result.Stats.TokensGenerated, result.Stats.TokensCached)
+			fmt.Printf("\033[90mTokens:\033[0m eval=%d gen=%d cached=%d\n", result.Stats.TokensEvaluated, result.Stats.TokensGenerated, result.Stats.TokensCached)
 		}
 		if result.Summary != "" {
-			fmt.Printf("Memory summary: %s\n", truncateString(result.Summary, 100))
+			fmt.Printf("\033[90mMemory summary:\033[0m %s\n", truncateString(result.Summary, 100))
 		}
 		if len(result.Retrieved) > 0 {
-			fmt.Printf("Retrieved %d RAG chunks:\n", len(result.Retrieved))
+			fmt.Printf("\033[90mRetrieved %d RAG chunks:\033[0m\n", len(result.Retrieved))
 			for i, doc := range result.Retrieved {
-				fmt.Printf("  [%d] %s (score: %.2f)\n", i+1, doc.Source, doc.Score)
+				fmt.Printf("  [%d] \033[36m%s\033[0m (score: %.2f)\n", i+1, doc.Source, doc.Score)
 			}
 		}
-		fmt.Printf("Duration: %s\n", duration.Truncate(time.Millisecond))
+		fmt.Printf("\033[90mDuration:\033[0m %s\n", duration.Truncate(time.Millisecond))
 	} else if result.Stats.TokensEvaluated > 0 || result.Stats.TokensGenerated > 0 || result.Stats.TokensCached > 0 {
 		log.Printf("stats: eval=%d gen=%d cached=%d", result.Stats.TokensEvaluated, result.Stats.TokensGenerated, result.Stats.TokensCached)
 	}

@@ -418,12 +418,39 @@ type HybridMemoryEngine struct {
 	vectorStore     *VectorStore
 	contextWindow   *SlidingContextWindow
 	compressor      *MemoryCompressor
+	asyncWriter     *AsyncWriter
 	embedFn         func(ctx context.Context, text string) ([]float32, error)
 	summarizeFn     func(ctx context.Context, texts []string) (string, error)
 	autoCompress    bool
 	compressCounter int
 	compressEvery   int
 	mu              sync.RWMutex
+
+	// Cache for last query embedding to avoid redundant calls
+	lastQuery     string
+	lastEmbedding []float32
+}
+
+type embeddingProviderFunc struct {
+	fn func(context.Context, string) ([]float32, error)
+}
+
+func (f *embeddingProviderFunc) Embed(ctx context.Context, text string) ([]float32, error) {
+	if f.fn == nil {
+		return nil, nil
+	}
+	return f.fn(ctx, text)
+}
+
+type summarizerProviderFunc struct {
+	fn func(context.Context, []string) (string, error)
+}
+
+func (f *summarizerProviderFunc) Summarize(ctx context.Context, texts []string) (string, error) {
+	if f.fn == nil {
+		return "", nil
+	}
+	return f.fn(ctx, texts)
 }
 
 // HybridMemoryConfig configures the hybrid memory engine.
@@ -461,10 +488,20 @@ func NewHybridMemoryEngine(
 
 	compressor := NewMemoryCompressor(vectorStore, summarize, embed, cfg.CompressConfig)
 
+	// Initialize async writer for non-blocking storage
+	asyncWriter := NewAsyncWriter(
+		vectorStore,
+		&embeddingProviderFunc{fn: embed},
+		&summarizerProviderFunc{fn: summarize},
+		DefaultAsyncWriterConfig(),
+	)
+	asyncWriter.Start()
+
 	engine := &HybridMemoryEngine{
 		vectorStore:   vectorStore,
 		contextWindow: contextWindow,
 		compressor:    compressor,
+		asyncWriter:   asyncWriter,
 		embedFn:       embed,
 		summarizeFn:   summarize,
 		autoCompress:  cfg.AutoCompress,
@@ -478,30 +515,42 @@ func NewHybridMemoryEngine(
 	return engine, nil
 }
 
-// Store saves a new memory entry with automatic embedding.
+// Store saves a new memory entry. It uses an async writer to avoid blocking
+// the critical path with embedding and summarization.
 func (e *HybridMemoryEngine) Store(ctx context.Context, text, role string) (int64, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	// Check if we have a cached embedding for this text (likely from a recent Retrieve call)
 	var embedding []float32
-	var summary string
+	if text == e.lastQuery {
+		embedding = e.lastEmbedding
+	}
 
-	// Generate embedding
-	if e.embedFn != nil {
-		var err error
-		embedding, err = e.embedFn(ctx, text)
-		if err != nil {
-			// Log but don't fail - we can still store without embedding
-			embedding = nil
+	// Queue for async processing
+	if e.asyncWriter != nil {
+		if embedding != nil {
+			err := e.asyncWriter.WriteWithEmbedding(text, role, embedding)
+			if err == nil {
+				return 0, nil // ID not available yet for async writes
+			}
+		} else {
+			err := e.asyncWriter.Write(ctx, text, role)
+			if err == nil {
+				return 0, nil
+			}
 		}
 	}
 
-	// For longer texts, generate summary
+	// Fallback to synchronous if async writer is missing or fails
+	var summary string
 	if len(text) > 500 && e.summarizeFn != nil {
-		summaryResult, err := e.summarizeFn(ctx, []string{text})
-		if err == nil {
-			summary = summaryResult
-		}
+		summaryResult, _ := e.summarizeFn(ctx, []string{text})
+		summary = summaryResult
+	}
+
+	if embedding == nil && e.embedFn != nil {
+		embedding, _ = e.embedFn(ctx, text)
 	}
 
 	id, err := e.vectorStore.InsertMemory(ctx, text, summary, role, embedding)
@@ -525,18 +574,27 @@ func (e *HybridMemoryEngine) Store(ctx context.Context, text, role string) (int6
 
 // Retrieve gets relevant memories for a query.
 func (e *HybridMemoryEngine) Retrieve(ctx context.Context, query string, limit int) ([]VectorEntry, error) {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
 	if e.embedFn == nil {
 		// Fallback to recent memories if no embedding
 		return e.vectorStore.GetRecentMemories(ctx, limit)
 	}
 
-	queryEmbedding, err := e.embedFn(ctx, query)
-	if err != nil {
-		// Fallback to recent
-		return e.vectorStore.GetRecentMemories(ctx, limit)
+	var queryEmbedding []float32
+	if query == e.lastQuery && e.lastEmbedding != nil {
+		queryEmbedding = e.lastEmbedding
+	} else {
+		var err error
+		queryEmbedding, err = e.embedFn(ctx, query)
+		if err != nil {
+			// Fallback to recent
+			return e.vectorStore.GetRecentMemories(ctx, limit)
+		}
+		// Cache for reuse in Store call
+		e.lastQuery = query
+		e.lastEmbedding = queryEmbedding
 	}
 
 	return e.vectorStore.SearchMemory(ctx, queryEmbedding, limit)
@@ -544,8 +602,8 @@ func (e *HybridMemoryEngine) Retrieve(ctx context.Context, query string, limit i
 
 // BuildContext constructs optimized context for the SLM.
 func (e *HybridMemoryEngine) BuildContext(ctx context.Context, query string, maxTokens int) (string, error) {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
 	builder := NewContextBuilder(maxTokens)
 
@@ -566,8 +624,19 @@ func (e *HybridMemoryEngine) BuildContext(ctx context.Context, query string, max
 
 	// Get semantically relevant memories
 	if e.embedFn != nil {
-		queryEmbedding, err := e.embedFn(ctx, query)
-		if err == nil {
+		var queryEmbedding []float32
+		if query == e.lastQuery && e.lastEmbedding != nil {
+			queryEmbedding = e.lastEmbedding
+		} else {
+			var err error
+			queryEmbedding, err = e.embedFn(ctx, query)
+			if err == nil {
+				e.lastQuery = query
+				e.lastEmbedding = queryEmbedding
+			}
+		}
+
+		if queryEmbedding != nil {
 			relevant, err := e.vectorStore.SearchMemory(ctx, queryEmbedding, 10)
 			if err == nil {
 				for i, entry := range relevant {
@@ -617,8 +686,11 @@ func (e *HybridMemoryEngine) Compress(ctx context.Context) error {
 	return e.compressor.CompressOld(ctx)
 }
 
-// Close releases all resources.
+// Close releases all resources, including the async writer.
 func (e *HybridMemoryEngine) Close() error {
+	if e.asyncWriter != nil {
+		e.asyncWriter.Stop()
+	}
 	return e.vectorStore.Close()
 }
 

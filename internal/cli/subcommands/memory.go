@@ -78,12 +78,12 @@ func handleVectorMemoryOperations(ctx context.Context, cfg config.Config, showSt
 			return 1
 		}
 
-		fmt.Println("=== Vector Memory Statistics ===")
-		fmt.Printf("Database: %s\n", cfg.Memory.VectorDBPath)
+		fmt.Println("\033[1m=== Vector Memory Statistics ===\033[0m")
+		fmt.Printf("Database: \033[36m%s\033[0m\n", cfg.Memory.VectorDBPath)
 		fmt.Println()
 
 		for key, value := range stats {
-			fmt.Printf("  %s: %v\n", formatStatKey(key), value)
+			fmt.Printf("  \033[34m%-20s\033[0m %v\n", formatStatKey(key)+":", value)
 		}
 		fmt.Println()
 		return 0

@@ -81,6 +81,18 @@ func (s *llmSummarizer) Summarize(ctx context.Context, history []conversation.Hi
 		return "", nil
 	}
 
+	// Optimization: Cache summary by history content hash
+	hHash := sha1.New()
+	for _, item := range history {
+		hHash.Write([]byte(item.Role))
+		hHash.Write([]byte(item.Content))
+	}
+	historyKey := "sum_h_" + hex.EncodeToString(hHash.Sum(nil))
+
+	if cached, ok := s.cache.Load(historyKey); ok {
+		return cached.(string), nil
+	}
+
 	reference := history
 	if s.embedder != nil {
 		if subset, err := s.selectRelevant(ctx, history); err != nil {
@@ -131,7 +143,11 @@ func (s *llmSummarizer) Summarize(ctx context.Context, history []conversation.Hi
 		return "", err
 	}
 
-	return strings.TrimSpace(resp.Text), nil
+	summary := strings.TrimSpace(resp.Text)
+	// Cache the result
+	s.cache.Store(historyKey, summary)
+
+	return summary, nil
 }
 
 func (s *llmSummarizer) selectRelevant(ctx context.Context, history []conversation.HistoryItem) ([]conversation.HistoryItem, error) {

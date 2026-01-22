@@ -8,13 +8,16 @@ OpenEye is a lightweight on-device small language model (SLM) framework. It focu
 The CLI is the user-facing entry point. It wires subcommands (`chat`, `serve`, `memory`) to the shared pipeline and loads configuration before delegating work.
 
 ### Pipeline (`internal/pipeline`)
-The pipeline assembles context, retrieves conversation history, invokes the runtime adapter, and persists new turns. It hides implementation details from both interactive and long-running workflows.
+The pipeline assembles context, retrieves conversation history, invokes the runtime adapter, manages multi-tier memory (including Omem), handles vision tasks, and persists new turns. It hides implementation details from both interactive and long-running workflows.
 
 ### Retrieval (`internal/rag`)
 The retriever indexes the configured knowledge corpus into semantic chunks, supports configurable chunking overlap, and skips files outside the allowed extension list. It persists cosine-normalized vectors so subsequent runs can reuse a cached index.
 
 ### Embeddings (`internal/embedding`)
-Embedding providers wrap external services (llama.cpp by default) and expose a narrow `Provider` interface used by both RAG and the summarizer. Timeouts and model selection are configurable per backend.
+Embedding providers wrap external services (llama.cpp by default) and expose a narrow `Provider` interface used by RAG, the summarizer, and advanced memory engines (Omem/Mem0). Timeouts and model selection are configurable per backend.
+
+### Vision (`internal/image`)
+The image processor provides multimodal capabilities, allowing the pipeline to ingest, resize, and normalize images before passing them to vision-capable SLMs.
 
 ### Summarizer Assistant (`internal/pipeline/summarizer.go`)
 An optional summariser selects the most relevant turns via embeddings, enforces similarity thresholds, and caches vectors so repeated summaries avoid redundant requests.
@@ -22,8 +25,13 @@ An optional summariser selects the most relevant turns via embeddings, enforces 
 ### Runtime Manager (`internal/runtime`)
 The runtime package normalizes inference requests. Backends register themselves in a registry and implement the `Adapter` interface. The default HTTP adapter lives in `internal/llmclient`.
 
-### Conversation Memory (`internal/context/memory`)
-A SQLite-backed store keeps recent dialog turns. The pipeline consults it before every call to reconstruct conversation history and writes both user and assistant messages after successful completion.
+### Multi-tier Memory (`internal/context/memory`)
+OpenEye implements a sophisticated multi-tier memory architecture to provide long-term coherence on resource-constrained devices:
+
+1. **Short-term Memory**: A SQLite-backed store for recent dialog turns, using a sliding window context.
+2. **Vector Memory**: A DuckDB-backed vector store that provides semantically relevant turn retrieval based on embedding similarity.
+3. **Mem0**: A fact-based long-term memory system that extracts and updates individual facts from the conversation.
+4. **Omem (OpenEye Memory)**: A next-generation memory engine combining atomic fact encoding, multi-view indexing (semantic, lexical, and symbolic), and a lightweight entity-relationship graph for high-precision retrieval and temporal reasoning.
 
 ### Transport (`server` and `client`)
 - `server/tcp_server.go` exposes a TCP listener that accepts newline-delimited messages, acknowledges receipt, and responds with base64 encoded `RESP` or `ERR` frames once the pipeline returns.
@@ -31,12 +39,12 @@ A SQLite-backed store keeps recent dialog turns. The pipeline consults it before
 
 ## Request Lifecycle
 
-1. **Input** – The CLI takes a prompt (`chat`) or the TCP server accepts a message from a client.
-2. **Context Build** – The pipeline normalizes the message, gathers recent memory entries, loads the system prompt, and renders the conversation template.
+1. **Input** – The CLI takes a prompt (`chat`) or the TCP server accepts a message from a client. Images are processed and normalized if present.
+2. **Context Build** – The pipeline normalizes the message, gathers recent memory entries, retrieves facts from Omem or Vector Memory, loads the system prompt, and renders the conversation template.
 3. **Runtime Selection** – The runtime manager instantiates the configured adapter (HTTP by default) and forwards the formatted prompt along with generation hints.
 4. **Model Invocation** – The adapter issues an HTTP request to the local LLM endpoint (or other adapters in the future) and returns a structured response.
 5. **Streaming (Optional)** – When streaming is requested, callbacks receive incremental tokens or chunks. The pipeline buffers them before persisting.
-6. **Persistence** – User and assistant turns are appended to the memory store.
+6. **Persistence** – User and assistant turns are appended to the short-term memory store. New facts are extracted and indexed by Omem for long-term recall.
 7. **Transport Response** – CLI prints the final text; the TCP server packages the reply and ships it back to the originating client.
 
 ## Configuration
@@ -82,6 +90,13 @@ rag:
   min_score: 0.2
   index_path: "openeye_rag.index"
   extensions: [".txt", ".md", ".markdown", ".rst", ".log", ".csv", ".tsv", ".json", ".yaml", ".yml", ".pdf"]
+
+image:
+  enabled: false
+  max_width: 800
+  max_height: 600
+  quality: 85
+  output_format: "jpeg"
 
 assistants:
   summarizer:
@@ -175,9 +190,38 @@ The summarizer assistant provides structured rollups of recent turns to keep lon
 
 At runtime you can opt out with `--no-summary`. Custom prompts or token budgets are best supplied through the config file or the `APP_SUMMARY_*` environment variables listed above.
 
+## Advanced Long-term Memory (Omem)
+
+OpenEye's premier memory system, Omem, enables deep context and long-term personalization. Unlike simple sliding windows, Omem:
+- **Extracts Atomic Facts**: Deconstructs conversation turns into high-fidelity "atomic facts".
+- **Multi-view Indexing**: Indexes facts using semantic (vector), lexical (full-text), and symbolic (keywords) views for reliable retrieval regardless of query style.
+- **Lightweight Entity Graph**: Maintains relationships between entities (people, places, concepts) to support complex reasoning over the conversational history.
+- **Adaptive Retrieval**: Adjusts retrieval strategies based on query complexity to balance speed and accuracy.
+
+To enable Omem, set `memory.omem.enabled: true` in your configuration.
+
+## Multimodal Vision Support
+
+OpenEye supports vision tasks by integrating an image processor in the pipeline. When an image is provided as part of a prompt, the framework:
+1. Validates and decodes the image (JPEG, PNG, BMP).
+2. Resizes and normalizes it according to `image` configuration settings.
+3. Encodes it for the vision-capable backend (e.g., LLaVA or other multimodal adapters).
+
+Enable vision features by setting `image.enabled: true`.
+
 ## Semantic Embeddings
 
-Both RAG and the summarizer rely on the shared embedding provider configured under `embedding`. The default `llamacpp` backend calls a llama.cpp HTTP server; override `embedding.llamacpp.base_url`, `model`, and `timeout` to match your deployment. Flip `embedding.enabled: true` (or export `APP_EMBEDDING_ENABLED=true`) so the pipeline can request vectors. If the embedding service is unreachable, retrieval and summarisation are automatically skipped while logging the error.
+Both RAG, the summarizer, and advanced memory engines rely on the shared embedding provider configured under `embedding`. The default `llamacpp` backend calls a llama.cpp HTTP server; override `embedding.llamacpp.base_url`, `model`, and `timeout` to match your deployment. Flip `embedding.enabled: true` (or export `APP_EMBEDDING_ENABLED=true`) so the pipeline can request vectors. If the embedding service is unreachable, retrieval and summarisation are automatically skipped while logging the error.
+
+## Benchmarking & Performance
+
+OpenEye includes a dedicated benchmarking suite (`internal/context/memory/benchmark`) to evaluate and optimize memory engines. It measures:
+- **Latency**: Write and retrieval speeds across different engine types.
+- **Recall Accuracy**: Ability to retrieve "planted facts" from large conversational histories.
+- **Token Efficiency**: Optimization of context window usage.
+- **Resource Footprint**: Memory and CPU usage on resource-constrained devices.
+
+Run benchmarks using the internal testing tools to compare Omem, Mem0, and Classic memory performance on your specific hardware.
 
 ## Running the CLI
 
@@ -306,7 +350,11 @@ internal/
   cli/         CLI entry points
   config/      Unified configuration loader
   context/     Context and formatting logic
+    memory/    Multi-tier memory systems (Short-term, Vector, Omem, Mem0)
+    omem/      OpenEye Memory next-gen implementation
+    mem0/      Legacy fact-based memory adapter
   embedding/   Embedding providers (llama.cpp HTTP adapter by default)
+  image/       Image processing for multimodal support
   llmclient/   HTTP adapter for LLM servers
   pipeline/    High-level orchestration
   rag/         Retrieval helpers and vector index management

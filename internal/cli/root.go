@@ -36,11 +36,15 @@ func Execute() int {
 	case "chat":
 		return runChat(ctx, cfg, registry, args[1:])
 	case "cli":
-		return runCli(ctx, cfg, registry, args[1:])
+		return runCli(ctx, cfg, registry, args[1:], false)
+	case "tui":
+		return runCli(ctx, cfg, registry, args[1:], true)
 	case "serve":
 		return subcommands.RunServe(ctx, cfg)
 	case "memory":
 		return subcommands.RunMemory(cfg, args[1:])
+	case "config":
+		return subcommands.RunConfig(cfg)
 	case "help", "-h", "--help":
 		printHelp()
 		return 0
@@ -102,8 +106,12 @@ func runChat(ctx context.Context, cfg config.Config, registry runtime.Registry, 
 	return subcommands.RunChat(ctx, cfg, registry, strings.TrimSpace(*message), images, options)
 }
 
-func runCli(ctx context.Context, cfg config.Config, registry runtime.Registry, args []string) int {
-	fs := flag.NewFlagSet("cli", flag.ContinueOnError)
+func runCli(ctx context.Context, cfg config.Config, registry runtime.Registry, args []string, useTui bool) int {
+	commandName := "cli"
+	if useTui {
+		commandName = "tui"
+	}
+	fs := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
 	stream := fs.Bool("stream", true, "Stream tokens instead of waiting for the full response")
 	disableRAG := fs.Bool("no-rag", false, "Disable retrieval augmented generation for this request")
@@ -127,6 +135,9 @@ func runCli(ctx context.Context, cfg config.Config, registry runtime.Registry, a
 		ShowStats:           *showStats,
 	}
 
+	if useTui {
+		return subcommands.RunTui(ctx, cfg, registry, options)
+	}
 	return subcommands.RunCli(ctx, cfg, registry, options)
 }
 
@@ -138,9 +149,11 @@ Usage:
 
 Commands:
   chat      Run a single prompt against the configured runtime
-  cli       Interactive conversation mode with persistent memory
+  cli       Interactive ANSI conversation mode (traditional)
+  tui       Interactive Charm-based TUI (modern, Markdown support)
   serve     Start the TCP server using runtime + memory pipeline
   memory    Inspect and manage conversation memory
+  config    Show the current configuration settings
 
 Memory Features:
   - Vector-based semantic search (DuckDB backend)

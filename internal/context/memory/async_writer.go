@@ -12,6 +12,7 @@ import (
 type AsyncWriter struct {
 	store         *VectorStore
 	embedder      EmbeddingProvider
+	summarizer    SummaryProvider
 	writeQueue    chan writeRequest
 	batchSize     int
 	flushInterval time.Duration
@@ -25,6 +26,7 @@ type writeRequest struct {
 	text      string
 	role      string
 	embedding []float32
+	summary   string
 	timestamp time.Time
 }
 
@@ -45,7 +47,7 @@ func DefaultAsyncWriterConfig() AsyncWriterConfig {
 }
 
 // NewAsyncWriter creates a new async writer.
-func NewAsyncWriter(store *VectorStore, embedder EmbeddingProvider, cfg AsyncWriterConfig) *AsyncWriter {
+func NewAsyncWriter(store *VectorStore, embedder EmbeddingProvider, summarizer SummaryProvider, cfg AsyncWriterConfig) *AsyncWriter {
 	if cfg.QueueSize <= 0 {
 		cfg.QueueSize = 100
 	}
@@ -59,6 +61,7 @@ func NewAsyncWriter(store *VectorStore, embedder EmbeddingProvider, cfg AsyncWri
 	return &AsyncWriter{
 		store:         store,
 		embedder:      embedder,
+		summarizer:    summarizer,
 		writeQueue:    make(chan writeRequest, cfg.QueueSize),
 		batchSize:     cfg.BatchSize,
 		flushInterval: cfg.FlushInterval,
@@ -96,36 +99,32 @@ func (w *AsyncWriter) Stop() error {
 }
 
 // Write queues a write request for async processing.
-// Returns immediately without blocking on database operations.
+// Returns immediately without blocking on embedding or database operations.
 func (w *AsyncWriter) Write(ctx context.Context, text, role string) error {
 	if w == nil || w.store == nil {
 		return nil
-	}
-
-	// Generate embedding if embedder is available
-	var embedding []float32
-	if w.embedder != nil {
-		var err error
-		embedding, err = w.embedder.Embed(ctx, text)
-		if err != nil {
-			log.Printf("async_writer: failed to generate embedding: %v", err)
-			// Continue without embedding
-		}
 	}
 
 	select {
 	case w.writeQueue <- writeRequest{
 		text:      text,
 		role:      role,
-		embedding: embedding,
 		timestamp: time.Now(),
 	}:
 		return nil
 	default:
-		// Queue full - write synchronously to avoid data loss
-		log.Printf("async_writer: queue full, writing synchronously")
-		_, err := w.store.InsertMemory(ctx, text, "", role, embedding)
-		return err
+		// Queue full - falling back to background goroutine to avoid blocking
+		// this request, while still ensuring we don't drop data.
+		go func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			w.writeBatch(bgCtx, []writeRequest{{
+				text:      text,
+				role:      role,
+				timestamp: time.Now(),
+			}})
+		}()
+		return nil
 	}
 }
 
@@ -144,11 +143,18 @@ func (w *AsyncWriter) WriteWithEmbedding(text, role string, embedding []float32)
 	}:
 		return nil
 	default:
-		// Queue full - write synchronously
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, err := w.store.InsertMemory(ctx, text, "", role, embedding)
-		return err
+		// Queue full - write in background
+		go func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			w.writeBatch(bgCtx, []writeRequest{{
+				text:      text,
+				role:      role,
+				embedding: embedding,
+				timestamp: time.Now(),
+			}})
+		}()
+		return nil
 	}
 }
 
@@ -233,10 +239,27 @@ func (w *AsyncWriter) processLoop() {
 
 func (w *AsyncWriter) writeBatch(ctx context.Context, batch []writeRequest) error {
 	for _, req := range batch {
-		_, err := w.store.InsertMemory(ctx, req.text, "", req.role, req.embedding)
+		embedding := req.embedding
+		if embedding == nil && w.embedder != nil {
+			var err error
+			embedding, err = w.embedder.Embed(ctx, req.text)
+			if err != nil {
+				log.Printf("async_writer: failed to generate embedding: %v", err)
+			}
+		}
+
+		summary := req.summary
+		if summary == "" && len(req.text) > 500 && w.summarizer != nil {
+			var err error
+			summary, err = w.summarizer.Summarize(ctx, []string{req.text})
+			if err != nil {
+				log.Printf("async_writer: failed to generate summary: %v", err)
+			}
+		}
+
+		_, err := w.store.InsertMemory(ctx, req.text, summary, req.role, embedding)
 		if err != nil {
 			log.Printf("async_writer: insert error: %v", err)
-			// Continue with other items
 		}
 	}
 	return nil
