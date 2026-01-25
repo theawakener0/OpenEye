@@ -626,9 +626,9 @@ func (s *FactStore) SemanticSearch(ctx context.Context, queryEmbedding []float32
 		       created_at, last_accessed, access_count, is_obsolete, superseded_by
 		FROM omem_facts
 		WHERE embedding IS NOT NULL AND is_obsolete = FALSE
-		ORDER BY importance DESC, created_at DESC
+		ORDER BY created_at DESC
 		LIMIT ?
-	`, limit*5)
+	`, 100)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query facts: %w", err)
 	}
@@ -775,13 +775,9 @@ func (s *FactStore) fallbackTextSearch(ctx context.Context, queryText string, li
 
 	// Build WHERE clause with OR conditions
 	conditions := make([]string, len(words))
-	args := make([]interface{}, len(words)+1)
-	for i, word := range words {
+	for i := range words {
 		conditions[i] = "(LOWER(atomic_text) LIKE ? OR LOWER(keywords) LIKE ?)"
-		args[i*2] = "%" + word + "%"
-		args[i*2+1] = "%" + word + "%"
 	}
-	args[len(args)-1] = limit
 
 	query := fmt.Sprintf(`
 		SELECT id, fact_text, atomic_text, category, importance, embedding, keywords,

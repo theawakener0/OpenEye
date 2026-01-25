@@ -2,27 +2,15 @@
 
 ## OpenEye: The New Revolution of SLMs
 
-We introduce a transformative concept in AI wearables: an open-source, pluggable,
-smart glasses framework designed to redefine the boundaries of human and machine
-interaction. Unlike conventional smart glasses, which operate as closed systems dependent
-on cloud infrastructure, this project proposes a free, extensible, and offline architecture
-engineered to revolutionize AI integration in small scale devices.
+**OpenEye** is an open-source AI framework designed to enable fully native, offline AI execution on constrained edge hardware. While most modern AI systems depend on cloud-based inference and large-scale models, OpenEye introduces a decentralized architecture that allows AI to run directly on-device, minimizing latency, preserving privacy, and eliminating internet dependency.
 
-Central to this innovation is a novel computational architecture that enables Small
-Language Models (SLMs) to surpass Large Language Models (LLMs) in efficiency and
-contextual adaptability. By optimizing model performance directly on device, the system
-minimizes latency, enhances privacy, and enables seamless functionality without internet dependence.
+The primary technical contribution of OpenEye is **Omem (OpenEye Memory)**, a novel four-pillar memory architecture developed for edge-based Small Language Models (SLMs). Omem decouples reasoning from knowledge by retaining model intelligence locally while externalizing knowledge into efficient vectorized memory. This separation enables scalable context awareness and adaptive behavior without increasing model size.
 
-Our primary technical contribution is **Omem (OpenEye Memory)**, a four-pillar memory architecture designed specifically for edge-based SLMs.
+Through architectural optimization of inference and memory access, OpenEye enables SLMs to approach LLM-level task capability under strict constraints of memory, power, and computation. The framework is hardware-agnostic and applicable across a wide range of edge systems, including wearables, embedded platforms, and autonomous devices.
 
-Our analysis demonstrates that the SLM-LLM capability gap can be substantially narrowed through architectural innovation rather than parameter scaling. By decoupling knowledge from model size—preserving intelligence on the edge while offloading knowledge to efficient vectorized storage—OpenEye enables LLM-competitive performance on commodity hardware including Raspberry Pi 4 (4GB) and Raspberry Pi 5.
+By prioritizing architectural innovation over parameter scaling, OpenEye establishes a general-purpose framework for decentralized edge intelligence. Its open-source and modular design promotes reproducibility, extensibility, and community-driven advancement in efficient and accessible artificial intelligence.
 
-This approach not only reimagines the purpose and design of smart glasses but also
-establishes the foundation for a broader AI framework optimized for edge computing.
+----
 
-The open-source and modular nature of the system invites global collaboration, fostering a new
-ecosystem of extensions and community driven innovation. Ultimately, OpenEye aims
-not merely to develop another wearable device but to initiate a technological revolution,
-a redefinition of how humanity perceives and interacts with reality through intelligent,
-accessible, and liberating AI systems.
+OpenEye challenges a core assumption in modern AI: that intelligence must live in the cloud and scale only through larger models. By introducing Omem, a memory-centric architecture that separates reasoning from knowledge, OpenEye demonstrates how Small Language Models can deliver advanced, context-aware intelligence entirely on edge devices. This shift enables AI systems that are faster, private by design, resilient to connectivity loss, and deployable on constrained hardware. Rather than optimizing another wearable, OpenEye proposes a new paradigm for edge intelligence, one where architectural innovation, not parameter scaling, defines capability—positioning the project as both a breakthrough in AI wearables and a foundational framework for the future of decentralized AI.
 

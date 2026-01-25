@@ -335,27 +335,3 @@ Based on architectural analysis, the following enhancements would further improv
 
 **Recommendation:** Qwen2.5-1.5B with Q4_K_M quantization offers the best balance of quality and resource usage for Pi 4.
 
----
-
-## 7. Reproducibility
-
-All benchmark code is available in the repository:
-
-```
-internal/context/memory/benchmark/
-├── generator.go        # Synthetic conversation generator
-├── complexity_corpus.go # 100 labeled queries
-├── runner.go           # Benchmark execution harness
-└── (adapters)          # System-specific adapters (to be added)
-```
-
-To run benchmarks:
-```bash
-# Generate synthetic test data
-go test -v ./internal/context/memory/benchmark -run TestGenerateConversation
-
-# Execute full benchmark suite (once adapters implemented)
-go test -v ./internal/context/memory/benchmark -run TestBenchmarkSuite -timeout 30m
-```
-
-Configuration presets for ablation studies are defined in `internal/context/memory/omem/config.go` via the `AblationConfig()` function.

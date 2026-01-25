@@ -220,6 +220,9 @@ func (r *BenchmarkRunner) benchmarkSystem(
 
 	// Process conversation turns
 	for i, turn := range conversation.Turns {
+		if (i/2)%5 == 0 && i%2 == 0 {
+			fmt.Printf("  Processing turn %d/%d...\n", i/2, len(conversation.Turns)/2)
+		}
 		// Skip warmup in metrics
 		isWarmup := i < r.config.WarmupTurns*2 // *2 because user+assistant
 
@@ -347,7 +350,10 @@ func (r *BenchmarkRunner) runRecallTests(
 		// Check if expected answer appears in results
 		found := false
 		partial := false
-		for _, result := range results {
+		fmt.Printf("    Test Query: %s\n", test.Query)
+		fmt.Printf("    Expected Answer: %s\n", test.ExpectedAnswer)
+		for i, result := range results {
+			fmt.Printf("      Result %d: %s\n", i, result)
 			if containsAnswer(result, test.ExpectedAnswer) {
 				found = true
 				break
@@ -355,6 +361,13 @@ func (r *BenchmarkRunner) runRecallTests(
 			if partialMatch(result, test.ExpectedAnswer) {
 				partial = true
 			}
+		}
+		if !found && !partial {
+			fmt.Printf("    FAILED RECALL\n")
+		} else if found {
+			fmt.Printf("    SUCCESS RECALL\n")
+		} else {
+			fmt.Printf("    PARTIAL RECALL\n")
 		}
 
 		if found {

@@ -53,7 +53,7 @@ memory:
   # Based on mem0 research: +26% accuracy, 91% lower latency, 90% fewer tokens
   # ============================================================================
   mem0:
-    enabled: true
+    enabled: false
     
     # Storage settings
     storage:
@@ -65,7 +65,7 @@ memory:
     
     # Fact Extraction (LLM-based)
     extraction:
-      enabled: true
+      enabled: false
       batch_size: 3                      # Conversation turns to process together
       async: true                        # Run extraction in background
       min_text_length: 10                # Minimum text length to process
@@ -75,7 +75,7 @@ memory:
     
     # Memory Update Operations (ADD/UPDATE/DELETE/NOOP)
     updates:
-      enabled: true
+      enabled: false
       conflict_threshold: 0.85           # Similarity threshold for conflict detection
       top_similar_count: 5               # Number of similar facts to compare
       auto_resolve_conflicts: true       # Automatically resolve contradictions
@@ -83,7 +83,7 @@ memory:
     
     # Entity-Relationship Graph
     graph:
-      enabled: true
+      enabled: false
       entity_resolution: true            # Merge similar entities
       entity_similarity_threshold: 0.9   # Threshold for entity resolution
       max_hops: 2                         # Maximum graph traversal depth
@@ -103,14 +103,14 @@ memory:
     
     # Rolling Summary (async background refresh)
     summary:
-      enabled: true
+      enabled: false
       refresh_interval: "5m"             # How often to refresh summary
       max_facts: 50                       # Max facts to include in summary
       max_tokens: 512                     # Max tokens for summary
       async: true                         # Refresh in background
 
   # ============================================================================
-  # Omem - Optimal Memory (NEXT-GEN)
+  # Omem - OpenEye Memory (NEXT-GEN)
   # ============================================================================
   # Advanced long-term memory combining SimpleMem, HippoRAG, and Zep techniques.
   # Designed specifically for on-device SLMs (200M-3B parameters).
@@ -249,9 +249,9 @@ assistants:
     max_transcript_tokens: 0
 
 embedding:
-  enabled: false
+  enabled: true
   backend: "llamacpp"
   llamacpp:
     base_url: "http://127.0.0.1:42068"
     model: ""
-    timeout: "30s"
+    timeout: "0"

@@ -43,6 +43,8 @@ func Execute() int {
 		return subcommands.RunServe(ctx, cfg)
 	case "memory":
 		return subcommands.RunMemory(cfg, args[1:])
+	case "benchmark":
+		return subcommands.RunBenchmark(cfg, args[1:])
 	case "config":
 		return subcommands.RunConfig(cfg)
 	case "help", "-h", "--help":

@@ -162,7 +162,17 @@ func (e *Engine) ProcessConversation(ctx context.Context, turns []ConversationTu
 	var storedFacts []Fact
 	var entityNames []string
 
-	for _, ef := range encoded.ExtractedFacts {
+	// Fallback: If no facts were extracted but we should store the text
+	effectiveFacts := encoded.ExtractedFacts
+	if len(effectiveFacts) == 0 {
+		effectiveFacts = append(effectiveFacts, ExtractedFact{
+			Text:       encoded.AtomicText,
+			Category:   CategoryOther,
+			Importance: 0.5,
+		})
+	}
+
+	for _, ef := range effectiveFacts {
 		// Create fact
 		fact := Fact{
 			Text:       ef.Text,

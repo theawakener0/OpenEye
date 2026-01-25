@@ -170,7 +170,13 @@ func (g *Generator) GenerateConversation() SyntheticConversation {
 
 	for i := 0; i < g.cfg.NumTurns; i++ {
 		// Advance time
-		interval := g.cfg.TurnIntervalMin + time.Duration(g.rng.Int63n(int64(g.cfg.TurnIntervalMax-g.cfg.TurnIntervalMin)))
+		diff := int64(g.cfg.TurnIntervalMax - g.cfg.TurnIntervalMin)
+		var interval time.Duration
+		if diff > 0 {
+			interval = g.cfg.TurnIntervalMin + time.Duration(g.rng.Int63n(diff))
+		} else {
+			interval = g.cfg.TurnIntervalMin
+		}
 		currentTime = currentTime.Add(interval)
 
 		topic := topics[i%len(topics)]

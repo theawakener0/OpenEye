@@ -15,13 +15,4 @@ The system's pluggable architecture enables rapid integration of new sensors, re
 
 While hardware constraints and prototype maturity remain considerations, OpenEye's design principles—efficient edge computation, extensibility, and multimodal interaction—lay a robust foundation for a new generation of wearable intelligence. By demonstrating that on-device reasoning and modular AI can operate effectively in small form factors, OpenEye is positioned to drive a paradigm shift in wearable technology, inaugurating an era where cognitive augmentation and human–machine collaboration are seamlessly integrated into daily life.
 
-## Future Directions
 
-The Omem architecture opens several research directions:
-
-- **Cross-Session Transfer Learning**: Can episodic memories from one conversation domain improve performance in another?
-- **Memory Consolidation Strategies**: Biological memory consolidates during sleep; can periodic "offline" consolidation improve SLM memory quality?
-- **Federated Memory**: Can multiple edge devices share anonymized memory patterns to improve individual performance?
-- **Neuromorphic Integration**: How might spiking neural network architectures change the optimal memory storage format?
-
-We invite the research community to build upon this foundation, extending OpenEye's capabilities and validating its principles across diverse hardware platforms and application domains.

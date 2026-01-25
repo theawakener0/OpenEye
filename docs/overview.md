@@ -117,6 +117,45 @@ embedding:
     timeout: "30s"
 ```
 
+## Benchmarking
+
+OpenEye includes a comprehensive benchmarking suite designed to measure memory system performance (Latency, Recall Accuracy, and Token Efficiency) on resource-constrained hardware like the Raspberry Pi.
+
+### CLI Benchmark
+
+The easiest way to run a benchmark is via the built-in subcommand. You can choose to use mocks for fast local testing or real models for hardware evaluation.
+
+```bash
+# Basic benchmark with mock models
+./OpenEye benchmark --turns 20 --recall 5
+
+# Real hardware benchmark using configured LLM and Embeddings
+# This uses the actual backend (e.g., llama.cpp) to extract facts and build context.
+./OpenEye benchmark --real --turns 50 --recall 10 --output ./my_results
+```
+
+**Flags:**
+- `--turns`: Number of conversation turns to simulate.
+- `--recall`: Number of distinct facts to plant and test for recall later.
+- `--real`: Use configured SLM and Embedding models instead of deterministic mocks.
+- `--output`: Directory to save JSON result files.
+
+### Automated Hardware Testing
+
+For integrated testing, you can run the benchmark suite via `go test`. To enable real model inference during tests, use the `USE_REAL_MODELS` environment variable.
+
+```bash
+# Run the hardware-specific benchmark test
+USE_REAL_MODELS=true go test -v ./internal/context/memory/benchmark -run TestHardwareBenchmark
+```
+
+### Metrics Measured
+
+- **Latency**: P50/P95/P99 statistics for memory writes (storing turns/facts) and retrieval (building context).
+- **Recall Accuracy**: The percentage of "planted" facts correctly retrieved during recall phases.
+- **Memory Consumption**: Peak heap usage and allocation rates, critical for monitoring stability on devices with limited RAM.
+- **Token Efficiency**: Average context window size and growth rate.
+
 ### Environment Overrides
 
 **Core runtime**

@@ -1,14 +1,3 @@
-// Package omem implements Omem (Optimal Memory) - an advanced long-term memory system
-// for on-device SLMs (200M-3B parameters). It combines techniques from SimpleMem,
-// HippoRAG, and Zep to provide semantic lossless compression, multi-view hybrid
-// retrieval, and complexity-aware adaptive retrieval depth.
-//
-// Key innovations:
-// - Atomic encoding with coreference resolution and temporal anchoring
-// - Multi-view indexing: semantic (dense) + lexical (BM25) + symbolic (metadata)
-// - Zero-LLM retrieval path with rule-based complexity estimation
-// - Episode/session management for cross-conversation continuity
-// - Parallel processing for efficient batch operations
 package omem
 
 import (
@@ -352,7 +341,7 @@ func DefaultConfig() Config {
 			DefaultTopK:                5,
 			ComplexityDelta:            2.0,
 			MaxTopK:                    20,
-			MinScore:                   0.3,
+			MinScore:                   0.0,
 			MaxContextTokens:           1000,
 			RecencyHalfLifeHours:       168, // 1 week
 			ImportanceWeight:           0.15,
