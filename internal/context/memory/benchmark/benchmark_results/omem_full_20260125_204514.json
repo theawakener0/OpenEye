@@ -1,0 +1,206 @@
+{
+  "system_name": "omem_full",
+  "timestamp": "2026-01-25T20:45:14.462803935+02:00",
+  "configuration": {
+    "max_tokens": 2048,
+    "num_turns": 10,
+    "recall_tests": 3
+  },
+  "write_latency_us": {
+    "count": 10,
+    "mean_us": 11835,
+    "median_us": 11790,
+    "p95_us": 29011,
+    "p99_us": 29011,
+    "min_us": 5722,
+    "max_us": 29011,
+    "std_dev_us": 20326.714108880005
+  },
+  "retrieve_latency_us": {
+    "count": 1,
+    "mean_us": 42984,
+    "median_us": 42984,
+    "p95_us": 42984,
+    "p99_us": 42984,
+    "min_us": 42984,
+    "max_us": 42984,
+    "std_dev_us": 0
+  },
+  "token_metrics": {
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "avg_context_size_tokens": 101,
+    "max_context_size_tokens": 101,
+    "context_growth_rate": 0,
+    "compression_ratio": 0
+  },
+  "memory_metrics": {
+    "peak_heap_bytes": 1733576,
+    "avg_heap_bytes": 1414955,
+    "total_alloc_bytes": 1359168,
+    "num_gc": 0,
+    "gc_pause_total_ns": 0,
+    "db_size_bytes": 0
+  },
+  "recall_metrics": {
+    "total_planted_facts": 3,
+    "correct_recalls": 1,
+    "partial_recalls": 0,
+    "failed_recalls": 2,
+    "recall_accuracy": 0.3333333333333333,
+    "avg_recall_latency_us": 30446.333333333332,
+    "recall_by_distance": {
+      "0-10": 0,
+      "11-25": 1
+    }
+  },
+  "raw_measurements": [
+    {
+      "operation": "store",
+      "duration_us": 15021,
+      "timestamp": "2026-01-25T20:45:14.764419353+02:00",
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 7040,
+      "timestamp": "2026-01-25T20:45:14.78204276+02:00",
+      "turn_index": 1,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 6615,
+      "timestamp": "2026-01-25T20:45:14.799228267+02:00",
+      "turn_index": 2,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 11225,
+      "timestamp": "2026-01-25T20:45:14.820979675+02:00",
+      "turn_index": 3,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 11463,
+      "timestamp": "2026-01-25T20:45:14.843000584+02:00",
+      "turn_index": 4,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 6887,
+      "timestamp": "2026-01-25T20:45:14.86029619+02:00",
+      "turn_index": 5,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 11096,
+      "timestamp": "2026-01-25T20:45:14.881870699+02:00",
+      "turn_index": 6,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 6477,
+      "timestamp": "2026-01-25T20:45:14.898903406+02:00",
+      "turn_index": 7,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 12362,
+      "timestamp": "2026-01-25T20:45:14.921645314+02:00",
+      "turn_index": 8,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 11236,
+      "timestamp": "2026-01-25T20:45:14.943317923+02:00",
+      "turn_index": 9,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 11790,
+      "timestamp": "2026-01-25T20:45:14.965834232+02:00",
+      "turn_index": 10,
+      "success": true
+    },
+    {
+      "operation": "retrieve",
+      "duration_us": 42984,
+      "timestamp": "2026-01-25T20:45:15.008820049+02:00",
+      "turn_index": 10,
+      "token_count": 101,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 11925,
+      "timestamp": "2026-01-25T20:45:15.031268657+02:00",
+      "turn_index": 11,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 29011,
+      "timestamp": "2026-01-25T20:45:15.070848473+02:00",
+      "turn_index": 12,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 6172,
+      "timestamp": "2026-01-25T20:45:15.087630379+02:00",
+      "turn_index": 13,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 5779,
+      "timestamp": "2026-01-25T20:45:15.103963886+02:00",
+      "turn_index": 14,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 5722,
+      "timestamp": "2026-01-25T20:45:15.120102692+02:00",
+      "turn_index": 15,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 11597,
+      "timestamp": "2026-01-25T20:45:15.142260201+02:00",
+      "turn_index": 16,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 12905,
+      "timestamp": "2026-01-25T20:45:15.16566411+02:00",
+      "turn_index": 17,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 11580,
+      "timestamp": "2026-01-25T20:45:15.187656619+02:00",
+      "turn_index": 18,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 11869,
+      "timestamp": "2026-01-25T20:45:15.210095027+02:00",
+      "turn_index": 19,
+      "success": true
+    }
+  ]
+}

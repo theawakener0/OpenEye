@@ -102,28 +102,72 @@ func (a *Adapter) Generate(ctx context.Context, req runtime.Request) (runtime.Re
 	}, nil
 }
 
-// Stream simulates token streaming by chunking the full response if native streaming is unavailable.
+// Stream performs real token streaming via SSE, falling back to chunking if SSE fails.
 func (a *Adapter) Stream(ctx context.Context, req runtime.Request, cb runtime.StreamCallback) error {
-	response, err := a.Generate(ctx, req)
-	if err != nil {
-		return err
+	options := mergeOptions(a.defaults, req.Options)
+
+	completionReq := CompletionRequest{
+		NPredict:      options.MaxTokens,
+		Temperature:   options.Temperature,
+		TopK:          options.TopK,
+		TopP:          options.TopP,
+		MinP:          options.MinP,
+		RepeatPenalty: options.RepeatPenalty,
+		RepeatLastN:   options.RepeatLastN,
+		Stream:        true, // Request streaming
+		CachePrompt:   true,
+		Stop:          options.Stop,
+	}
+
+	// Handle multimodal prompts
+	if len(req.Image) > 0 {
+		completionReq.Prompt = MultimodalPrompt{
+			PromptString:   req.Prompt,
+			MultimodalData: req.Image,
+		}
+	} else {
+		completionReq.Prompt = req.Prompt
+	}
+
+	// Try real SSE streaming first
+	idx := 0
+	err := a.client.GenerateStream(ctx, completionReq, func(token StreamToken) error {
+		if token.Stop {
+			return cb(runtime.StreamEvent{Final: true})
+		}
+		if token.Content != "" {
+			if err := cb(runtime.StreamEvent{Token: token.Content, Index: idx}); err != nil {
+				return err
+			}
+			idx++
+		}
+		return nil
+	})
+
+	// If streaming succeeded, we're done
+	if err == nil {
+		return nil
+	}
+
+	// Fallback: if streaming fails, use blocking generate + chunking
+	response, genErr := a.Generate(ctx, req)
+	if genErr != nil {
+		return genErr
 	}
 
 	if response.Text == "" {
-		// No content to stream - still send final event
 		return cb(runtime.StreamEvent{Final: true})
 	}
 
 	tokens := chunkForStreaming(response.Text)
-	for idx, token := range tokens {
+	for i, token := range tokens {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := cb(runtime.StreamEvent{Token: token, Index: idx}); err != nil {
+		if err := cb(runtime.StreamEvent{Token: token, Index: i}); err != nil {
 			return err
 		}
 	}
-
 	return cb(runtime.StreamEvent{Final: true})
 }
 

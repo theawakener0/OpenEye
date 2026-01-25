@@ -23,42 +23,59 @@ import (
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#00ADD8")).
-			Padding(0, 1)
+			Foreground(lipgloss.Color("#00D9FF")).
+			Background(lipgloss.Color("#1a1a2e")).
+			Padding(0, 2)
 
 	userStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#5FB4FA"))
+			Foreground(lipgloss.Color("#FF6B6B")).
+			PaddingLeft(1)
 
 	botStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#00FF87"))
+			Foreground(lipgloss.Color("#4ECDC4")).
+			PaddingLeft(1)
+
+	systemStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FFE66D")).
+			PaddingLeft(1)
 
 	subtitleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#808080")).
+			Foreground(lipgloss.Color("#666680")).
 			Italic(true).
-			Padding(0, 1)
+			PaddingLeft(2)
 
 	statsStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#808080")).
-			Italic(true)
+			Foreground(lipgloss.Color("#666680")).
+			Italic(true).
+			PaddingLeft(2)
 
 	borderStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#808080"))
+			BorderForeground(lipgloss.Color("#3d3d5c"))
 
 	inputBorderStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("#00ADD8"))
+				BorderForeground(lipgloss.Color("#00D9FF"))
 
 	suggestionStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#FFFFFF")).
-			Background(lipgloss.Color("#00ADD8")).
+			Background(lipgloss.Color("#00D9FF")).
 			Padding(0, 1)
 
 	normalSuggestionStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#808080")).
+				Foreground(lipgloss.Color("#666680")).
 				Padding(0, 1)
+
+	helpStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#4a4a6a")).
+			PaddingLeft(1)
+
+	streamingStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#4ECDC4")).
+			Italic(true)
 )
 
 var placeholders = []string{
@@ -93,18 +110,18 @@ type tuiModel struct {
 	attachedImages []string
 	imageMode      bool
 
-	viewport    viewport.Model
-	textarea    textarea.Model
-	spinner     spinner.Model
-	messages    []message
-	ready       bool
-	loading     bool
-	renderer    *glamour.TermRenderer
-	width       int
-	height      int
-	err         error
-	ctx         context.Context
-	program     *tea.Program
+	viewport viewport.Model
+	textarea textarea.Model
+	spinner  spinner.Model
+	messages []message
+	ready    bool
+	loading  bool
+	renderer *glamour.TermRenderer
+	width    int
+	height   int
+	err      error
+	ctx      context.Context
+	program  *tea.Program
 
 	// Autocompletion
 	suggestions     []string
@@ -144,7 +161,7 @@ func initialModel(ctx context.Context, cfg config.Config, pipe *pipeline.Pipelin
 
 	s := spinner.New()
 	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF87"))
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#4ECDC4"))
 
 	renderer, _ := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
@@ -152,15 +169,15 @@ func initialModel(ctx context.Context, cfg config.Config, pipe *pipeline.Pipelin
 	)
 
 	return tuiModel{
-		ctx:            ctx,
-		pipe:           pipe,
-		cfg:            cfg,
-		opts:           opts,
-		textarea:       ta,
-		spinner:        s,
-		renderer:       renderer,
-		imageMode:      cfg.Image.Enabled,
-		messages:       []message{},
+		ctx:       ctx,
+		pipe:      pipe,
+		cfg:       cfg,
+		opts:      opts,
+		textarea:  ta,
+		spinner:   s,
+		renderer:  renderer,
+		imageMode: cfg.Image.Enabled,
+		messages:  []message{},
 	}
 }
 
@@ -263,10 +280,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, message{role: "User", content: userMsg})
 			m.textarea.Reset()
 			m.loading = true
-			
+
 			// Add an empty bot message to be filled by stream
 			m.messages = append(m.messages, message{role: "OpenEye", content: ""})
-			
+
 			m.updateViewport()
 
 			return m, tea.Batch(
@@ -294,7 +311,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.textarea.SetWidth(msg.Width - 6)
-		
+
 		// Re-render renderer with new width
 		r, _ := glamour.NewTermRenderer(
 			glamour.WithAutoStyle(),
@@ -310,7 +327,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateViewport()
 			return m, nil
 		}
-		
+
 		if msg.final {
 			// Pipeline Respond will send the final pipelineResult eventually
 			return m, nil
@@ -541,40 +558,42 @@ func (m *tuiModel) updateViewport() {
 	var sb strings.Builder
 
 	for i, msg := range m.messages {
-		if msg.role == "System" {
-			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFF00")).Bold(true).Render("SYSTEM") + "\n" + msg.content + "\n\n")
-			continue
-		}
-		if msg.role == "User" {
-			sb.WriteString(userStyle.Render("YOU") + "\n" + msg.content + "\n\n")
-		} else if msg.role == "OpenEye" {
+		switch msg.role {
+		case "System":
+			sb.WriteString(systemStyle.Render("SYSTEM") + "\n")
+			sb.WriteString(msg.content + "\n\n")
+
+		case "User":
+			sb.WriteString(userStyle.Render("YOU") + "\n")
+			sb.WriteString(msg.content + "\n\n")
+
+		case "OpenEye":
+			sb.WriteString(botStyle.Render("OPENEYE") + "\n")
+
 			rendered := msg.content
 			if msg.content != "" {
 				r, _ := m.renderer.Render(msg.content)
 				rendered = r
 			}
-			
-			sb.WriteString(botStyle.Render("OPENEYE") + "\n" + rendered)
-			
+			sb.WriteString(rendered)
+
+			// Show stats for the last completed message
 			if i == len(m.messages)-1 && !m.loading && m.opts.ShowStats && msg.stats != nil {
-				statsStr := fmt.Sprintf("Stats: eval=%d gen=%d cached=%d time=%s",
+				statsStr := fmt.Sprintf("eval=%d | gen=%d | cached=%d | %s",
 					msg.stats.TokensEvaluated, msg.stats.TokensGenerated, msg.stats.TokensCached,
 					msg.duration.Truncate(time.Millisecond))
 				sb.WriteString("\n" + statsStyle.Render(statsStr) + "\n")
-			} else if !m.loading {
-				sb.WriteString("\n")
 			}
-		} else {
-			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(msg.role) + "\n" + msg.content + "\n\n")
+			sb.WriteString("\n")
+
+		default:
+			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6B6B")).Bold(true).Render(msg.role) + "\n")
+			sb.WriteString(msg.content + "\n\n")
 		}
 	}
 
 	if m.loading {
-		loadingText := " Thinking..."
-		if time.Now().Unix()%2 == 0 {
-			loadingText = " Processing..."
-		}
-		sb.WriteString("\n" + m.spinner.View() + lipgloss.NewStyle().Foreground(lipgloss.Color("#808080")).Italic(true).Render(loadingText))
+		sb.WriteString("\n" + m.spinner.View() + streamingStyle.Render(" Generating..."))
 	}
 
 	m.viewport.SetContent(sb.String())
@@ -615,14 +634,18 @@ func (m tuiModel) View() string {
 		return "\n  Initializing OpenEye..."
 	}
 
-	header := lipgloss.JoinVertical(lipgloss.Left,
-		titleStyle.Render("OpenEye Interactive"),
-		subtitleStyle.Render("The New Revolution of SLMs"),
+	// Header
+	header := lipgloss.JoinHorizontal(lipgloss.Center,
+		titleStyle.Render(" OpenEye "),
+		subtitleStyle.Render("Local AI Assistant"),
 	)
+
+	// Main viewport
 	viewport := borderStyle.Render(m.viewport.View())
-	
+
+	// Input area with suggestions
 	inputArea := m.textarea.View()
-	if m.showSuggestions {
+	if m.showSuggestions && len(m.suggestions) > 0 {
 		var suggBuilder strings.Builder
 		for i, s := range m.suggestions {
 			if i == m.suggestionIdx {
@@ -631,33 +654,35 @@ func (m tuiModel) View() string {
 				suggBuilder.WriteString(normalSuggestionStyle.Render(s) + "\n")
 			}
 		}
-		// Render suggestions above textarea
 		inputArea = lipgloss.JoinVertical(lipgloss.Left,
 			lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("#00ADD8")).
+				BorderForeground(lipgloss.Color("#00D9FF")).
 				Padding(0, 1).
 				Render(suggBuilder.String()),
 			inputArea,
 		)
 	}
-	
+
 	input := inputBorderStyle.Render(inputArea)
-	
+
 	mainView := fmt.Sprintf("%s\n%s\n%s", header, viewport, input)
 
+	// Menu overlay
 	if m.menuOpen {
 		var menuBuilder strings.Builder
-		menuBuilder.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00ADD8")).Render("   --- OPTIONS ---   ") + "\n\n")
+		menuBuilder.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00D9FF")).Render("OPTIONS") + "\n\n")
 		for i, opt := range menuOptions {
 			if i == m.menuIdx {
 				menuBuilder.WriteString(lipgloss.NewStyle().
-					Background(lipgloss.Color("#00ADD8")).
-					Foreground(lipgloss.Color("#FFFFFF")).
+					Background(lipgloss.Color("#00D9FF")).
+					Foreground(lipgloss.Color("#1a1a2e")).
+					Bold(true).
 					Padding(0, 1).
 					Render("> "+opt) + "\n")
 			} else {
 				menuBuilder.WriteString(lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#a0a0b0")).
 					Padding(0, 1).
 					Render("  "+opt) + "\n")
 			}
@@ -665,24 +690,27 @@ func (m tuiModel) View() string {
 
 		menuPopup := lipgloss.NewStyle().
 			Border(lipgloss.DoubleBorder()).
-			BorderForeground(lipgloss.Color("#00ADD8")).
+			BorderForeground(lipgloss.Color("#00D9FF")).
 			Padding(1, 2).
 			Render(menuBuilder.String())
 
-		// Place menu in the center
 		mainView = lipgloss.Place(m.width, m.height,
 			lipgloss.Center, lipgloss.Center,
 			menuPopup,
 			lipgloss.WithWhitespaceChars(" "),
-			lipgloss.WithWhitespaceForeground(lipgloss.Color("#202020")),
+			lipgloss.WithWhitespaceForeground(lipgloss.Color("#0a0a14")),
 		)
 	}
 
-	help := lipgloss.NewStyle().Foreground(lipgloss.Color("#606060")).Render(fmt.Sprintf(" Backend: %s | Image: %v | Ctrl+O: Options | Ctrl+S: Send | /clear: Reset", m.cfg.Runtime.Backend, m.imageMode))
+	// Footer help line
+	streamStatus := "off"
+	if m.opts.Stream {
+		streamStatus = "on"
+	}
+	help := helpStyle.Render(fmt.Sprintf("Ctrl+S Send | Ctrl+O Menu | /help Commands | Stream: %s | Images: %v", streamStatus, m.imageMode))
 
 	return mainView + "\n" + help
 }
-
 
 // RunTui executes the Charm TUI mode.
 func RunTui(ctx context.Context, cfg config.Config, registry runtime.Registry, opts CliOptions) int {

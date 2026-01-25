@@ -9,6 +9,7 @@ import (
 
 	"OpenEye/internal/cli/subcommands"
 	"OpenEye/internal/config"
+	"OpenEye/internal/logging"
 	"OpenEye/internal/runtime"
 
 	_ "OpenEye/internal/llmclient"
@@ -18,6 +19,16 @@ import (
 func Execute() int {
 	ctx := context.Background()
 	args := os.Args[1:]
+
+	// Determine if we're running in an interactive mode (need file logging to avoid corrupting display)
+	// Both TUI and CLI modes are interactive and should use file logging
+	useFileLogging := len(args) > 0 && (args[0] == "tui" || args[0] == "cli")
+
+	// Initialize logging (to file for interactive modes, to stderr otherwise)
+	if err := logging.Init(useFileLogging); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to initialize logging: %v\n", err)
+	}
+	defer logging.Close()
 
 	cfg, err := config.Resolve()
 	if err != nil {

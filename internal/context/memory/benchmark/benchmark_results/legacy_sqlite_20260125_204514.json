@@ -1,0 +1,206 @@
+{
+  "system_name": "legacy_sqlite",
+  "timestamp": "2026-01-25T20:45:14.214408438+02:00",
+  "configuration": {
+    "max_tokens": 2048,
+    "num_turns": 10,
+    "recall_tests": 3
+  },
+  "write_latency_us": {
+    "count": 10,
+    "mean_us": 319.5,
+    "median_us": 377,
+    "p95_us": 468,
+    "p99_us": 468,
+    "min_us": 171,
+    "max_us": 468,
+    "std_dev_us": 111.12267995328409
+  },
+  "retrieve_latency_us": {
+    "count": 1,
+    "mean_us": 258,
+    "median_us": 258,
+    "p95_us": 258,
+    "p99_us": 258,
+    "min_us": 258,
+    "max_us": 258,
+    "std_dev_us": 0
+  },
+  "token_metrics": {
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "avg_context_size_tokens": 149,
+    "max_context_size_tokens": 149,
+    "context_growth_rate": 0,
+    "compression_ratio": 0
+  },
+  "memory_metrics": {
+    "peak_heap_bytes": 884216,
+    "avg_heap_bytes": 877526,
+    "total_alloc_bytes": 25064,
+    "num_gc": 0,
+    "gc_pause_total_ns": 0,
+    "db_size_bytes": 0
+  },
+  "recall_metrics": {
+    "total_planted_facts": 3,
+    "correct_recalls": 1,
+    "partial_recalls": 0,
+    "failed_recalls": 2,
+    "recall_accuracy": 0.3333333333333333,
+    "avg_recall_latency_us": 513,
+    "recall_by_distance": {
+      "0-10": 0,
+      "11-25": 1
+    }
+  },
+  "raw_measurements": [
+    {
+      "operation": "store",
+      "duration_us": 173,
+      "timestamp": "2026-01-25T20:45:14.227883043+02:00",
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 214,
+      "timestamp": "2026-01-25T20:45:14.238515947+02:00",
+      "turn_index": 1,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 188,
+      "timestamp": "2026-01-25T20:45:14.249266451+02:00",
+      "turn_index": 2,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 267,
+      "timestamp": "2026-01-25T20:45:14.259953856+02:00",
+      "turn_index": 3,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 113,
+      "timestamp": "2026-01-25T20:45:14.27062346+02:00",
+      "turn_index": 4,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 240,
+      "timestamp": "2026-01-25T20:45:14.281369864+02:00",
+      "turn_index": 5,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 169,
+      "timestamp": "2026-01-25T20:45:14.292042268+02:00",
+      "turn_index": 6,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 215,
+      "timestamp": "2026-01-25T20:45:14.302788572+02:00",
+      "turn_index": 7,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 202,
+      "timestamp": "2026-01-25T20:45:14.313400376+02:00",
+      "turn_index": 8,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 358,
+      "timestamp": "2026-01-25T20:45:14.324361181+02:00",
+      "turn_index": 9,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 183,
+      "timestamp": "2026-01-25T20:45:14.335115485+02:00",
+      "turn_index": 10,
+      "success": true
+    },
+    {
+      "operation": "retrieve",
+      "duration_us": 258,
+      "timestamp": "2026-01-25T20:45:14.335375085+02:00",
+      "turn_index": 10,
+      "token_count": 149,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 171,
+      "timestamp": "2026-01-25T20:45:14.346089989+02:00",
+      "turn_index": 11,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 189,
+      "timestamp": "2026-01-25T20:45:14.356661693+02:00",
+      "turn_index": 12,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 210,
+      "timestamp": "2026-01-25T20:45:14.367426998+02:00",
+      "turn_index": 13,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 402,
+      "timestamp": "2026-01-25T20:45:14.378571402+02:00",
+      "turn_index": 14,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 364,
+      "timestamp": "2026-01-25T20:45:14.389644506+02:00",
+      "turn_index": 15,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 468,
+      "timestamp": "2026-01-25T20:45:14.400964611+02:00",
+      "turn_index": 16,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 377,
+      "timestamp": "2026-01-25T20:45:14.412101715+02:00",
+      "turn_index": 17,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 391,
+      "timestamp": "2026-01-25T20:45:14.423252519+02:00",
+      "turn_index": 18,
+      "success": true
+    },
+    {
+      "operation": "store",
+      "duration_us": 440,
+      "timestamp": "2026-01-25T20:45:14.434621824+02:00",
+      "turn_index": 19,
+      "success": true
+    }
+  ]
+}

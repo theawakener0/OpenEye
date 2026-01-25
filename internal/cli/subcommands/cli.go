@@ -15,14 +15,17 @@ import (
 )
 
 const (
-	colorReset  = "\033[0m"
-	colorBold   = "\033[1m"
-	colorBlue   = "\033[34m"
-	colorGreen  = "\033[32m"
-	colorCyan   = "\033[36m"
-	colorGray   = "\033[90m"
-	colorYellow = "\033[33m"
-	colorRed    = "\033[31m"
+	colorReset   = "\033[0m"
+	colorBold    = "\033[1m"
+	colorDim     = "\033[2m"
+	colorItalic  = "\033[3m"
+	colorBlue    = "\033[34m"
+	colorGreen   = "\033[32m"
+	colorCyan    = "\033[36m"
+	colorGray    = "\033[90m"
+	colorYellow  = "\033[33m"
+	colorRed     = "\033[31m"
+	colorMagenta = "\033[35m"
 )
 
 const logo = `
@@ -51,18 +54,18 @@ func RunCli(ctx context.Context, cfg config.Config, registry runtime.Registry, o
 	}()
 
 	fmt.Print(colorCyan + logo + colorReset)
-	fmt.Printf("%sThe New Revolution of SLMs%s\n\n", colorCyan, colorReset)
-	fmt.Printf("%sOpenEye Interactive Mode%s\n", colorBold, colorReset)
-	fmt.Printf("%sType 'exit' to quit | '/help' for commands%s\n", colorGray, colorReset)
-	fmt.Printf("%sRuntime: %s%s\n", colorGray, cfg.Runtime.Backend, colorReset)
-	fmt.Println()
+	fmt.Printf("%s%sLocal AI Assistant%s\n", colorDim, colorCyan, colorReset)
+	fmt.Printf("%s─────────────────────────────────────────────────────────%s\n", colorGray, colorReset)
+	fmt.Printf("%sRuntime:%s %s  %s│%s  %sStreaming:%s %v\n", colorGray, colorReset, cfg.Runtime.Backend, colorGray, colorReset, colorGray, colorReset, opts.Stream)
+	fmt.Printf("%sType '%s/help%s%s' for commands  '%s/exit%s%s' to quit%s\n", colorGray, colorCyan, colorReset, colorGray, colorCyan, colorReset, colorGray, colorReset)
+	fmt.Printf("%s─────────────────────────────────────────────────────────%s\n\n", colorGray, colorReset)
 
 	reader := bufio.NewReader(os.Stdin)
 	var attachedImages []string
 	imageMode := cfg.Image.Enabled
 
 	for {
-		fmt.Printf("%sYou: %s", colorBlue+colorBold, colorReset)
+		fmt.Printf("%s%s❯%s ", colorBlue, colorBold, colorReset)
 		input, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "input error: %v\n", err)
@@ -73,7 +76,7 @@ func RunCli(ctx context.Context, cfg config.Config, registry runtime.Registry, o
 		// Support multi-line input if ending with backslash
 		for strings.HasSuffix(message, "\\") {
 			message = strings.TrimSuffix(message, "\\")
-			fmt.Printf("%s...  %s", colorGray, colorReset)
+			fmt.Printf("%s│%s ", colorGray, colorReset)
 			nextPart, _ := reader.ReadString('\n')
 			message += strings.TrimSpace(nextPart)
 		}
@@ -102,7 +105,7 @@ func RunCli(ctx context.Context, cfg config.Config, registry runtime.Registry, o
 		// Run pipeline
 		start := time.Now()
 		options := pipeline.Options{}
-		
+
 		var spinnerDone chan struct{}
 		if opts.Stream {
 			options.Stream = true
@@ -111,7 +114,7 @@ func RunCli(ctx context.Context, cfg config.Config, registry runtime.Registry, o
 					close(spinnerDone)
 					spinnerDone = nil
 					fmt.Print("\r\033[K") // Clear spinner line
-					fmt.Printf("%sOpenEye: %s", colorGreen+colorBold, colorReset)
+					fmt.Printf("\n%s%s◆%s ", colorGreen, colorBold, colorReset)
 				}
 
 				if evt.Err != nil {
@@ -149,7 +152,7 @@ func RunCli(ctx context.Context, cfg config.Config, registry runtime.Registry, o
 		}
 
 		result, err := pipe.Respond(ctx, message, imagesToSend, options)
-		
+
 		if spinnerDone != nil {
 			close(spinnerDone)
 			fmt.Print("\r\033[K") // Clear spinner line
@@ -164,16 +167,16 @@ func RunCli(ctx context.Context, cfg config.Config, registry runtime.Registry, o
 		attachedImages = nil
 
 		if !opts.Stream {
-			fmt.Printf("%sOpenEye: %s", colorGreen+colorBold, colorReset)
+			fmt.Printf("\n%s%s◆%s ", colorGreen, colorBold, colorReset)
 			fmt.Println(result.Text)
 		}
 
 		duration := time.Since(start)
-		
+
 		if opts.ShowStats {
 			printResponseStats(result, duration)
 		} else if result.Stats.TokensEvaluated > 0 || result.Stats.TokensGenerated > 0 || result.Stats.TokensCached > 0 {
-			log.Printf("stats: eval=%d gen=%d cached=%d time=%s", 
+			log.Printf("stats: eval=%d gen=%d cached=%d time=%s",
 				result.Stats.TokensEvaluated, result.Stats.TokensGenerated, result.Stats.TokensCached,
 				duration.Truncate(10*time.Millisecond))
 		}
@@ -185,7 +188,7 @@ func RunCli(ctx context.Context, cfg config.Config, registry runtime.Registry, o
 // Returns (handled bool, updatedImages []string, imageMode bool).
 func handleCommand(ctx context.Context, pipe *pipeline.Pipeline, cmd string, opts *CliOptions, images []string, imageMode bool, imageConfigEnabled bool) (bool, []string, bool) {
 	lowerCmd := strings.ToLower(cmd)
-	
+
 	// Handle commands with arguments
 	if strings.HasPrefix(lowerCmd, "/image ") {
 		if !imageConfigEnabled {
@@ -371,7 +374,7 @@ func triggerCompression(ctx context.Context, pipe *pipeline.Pipeline) {
 func printResponseStats(result pipeline.Result, duration time.Duration) {
 	fmt.Printf("\n  %s--- Response Stats ---%s\n", colorGray+colorBold, colorReset)
 	if result.Stats.TokensEvaluated > 0 || result.Stats.TokensGenerated > 0 {
-		fmt.Printf("  %sTokens:%s eval=%d gen=%d cached=%d\n", 
+		fmt.Printf("  %sTokens:%s eval=%d gen=%d cached=%d\n",
 			colorGray, colorReset, result.Stats.TokensEvaluated, result.Stats.TokensGenerated, result.Stats.TokensCached)
 	}
 	if result.Summary != "" {
@@ -461,12 +464,12 @@ func isLikelyBase64(s string) bool {
 		return false
 	}
 	// Check if it's strictly alphanumeric + plus/slash/equals
-for _, r := range s {
-if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '+' || r == '/' || r == '=') {
-return false
-}
-}
-return true
+	for _, r := range s {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '+' || r == '/' || r == '=') {
+			return false
+		}
+	}
+	return true
 }
 
 func truncatePath(path string, maxLen int) string {

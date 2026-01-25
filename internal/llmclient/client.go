@@ -1,6 +1,7 @@
 package llmclient
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -45,6 +47,16 @@ type CompletionResponse struct {
 	Truncated          bool           `json:"truncated"`
 	Timings            map[string]any `json:"timings,omitempty"`
 }
+
+// StreamToken represents a single token event from SSE stream
+type StreamToken struct {
+	Content  string `json:"content"`
+	Stop     bool   `json:"stop"`
+	StopType string `json:"stop_type,omitempty"`
+}
+
+// StreamCallback is called for each token received during streaming
+type StreamCallback func(StreamToken) error
 
 type Client struct {
 	BaseURL    string
@@ -96,14 +108,14 @@ func (c *Client) Generate(ctx context.Context, req CompletionRequest) (Completio
 	}
 
 	//log.Printf("debug: response status=%d, body length=%d", resp.StatusCode, len(respBodyBytes))
-	
+
 	// Print first 500 chars of response for debugging
 	/*preview := string(respBodyBytes)
 	if len(preview) > 500 {
 		preview = preview[:500] + "..."
 	}
 	log.Printf("debug: raw response: %s", preview)
-*/
+	*/
 
 	if resp.StatusCode != http.StatusOK {
 		var errorBody map[string]any
@@ -165,4 +177,73 @@ func (c *Client) GetResponseWithImages(prompt string, images []string) (string, 
 	}
 
 	return resp.Content, nil
+}
+
+// GenerateStream performs a streaming completion request, calling cb for each token.
+// It parses SSE (Server-Sent Events) from the llama.cpp server.
+func (c *Client) GenerateStream(ctx context.Context, req CompletionRequest, cb StreamCallback) error {
+	req.Stream = true // Force streaming mode
+
+	url := fmt.Sprintf("%s/completion", c.BaseURL)
+	bodyBytes, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+
+	// Use a client without timeout for streaming since generation can take a while
+	streamClient := &http.Client{}
+	resp, err := streamClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		line := scanner.Text()
+
+		// Skip empty lines (SSE event separators)
+		if line == "" {
+			continue
+		}
+
+		// Parse SSE data lines
+		if strings.HasPrefix(line, "data: ") {
+			jsonData := strings.TrimPrefix(line, "data: ")
+
+			var token StreamToken
+			if err := json.Unmarshal([]byte(jsonData), &token); err != nil {
+				// Skip malformed events
+				continue
+			}
+
+			if err := cb(token); err != nil {
+				return err
+			}
+
+			if token.Stop {
+				return nil // Generation complete
+			}
+		}
+	}
+
+	return scanner.Err()
 }
