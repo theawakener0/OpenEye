@@ -1,86 +1,276 @@
 # OpenEye: High-Performance Offline AI for Wearables
 
-**OpenEye** is a transformative open-source framework designed to interact through pluggable, offline, and smart wearable systems. It empowers Small Language Models (SLMs) to achieve LLM-competitive reasoning on edge devices like Raspberry Pi 5 or Custom edge hardware, ensuring privacy, low latency, and autonomy without cloud dependence.
+**OpenEye** is an open-source framework for running Small Language Models (SLMs) on edge devices, smart glasses, Raspberry Pi 5, Orange pi, and custom hardware. It provides offline-first, privacy-preserving AI inference with a novel memory architecture that closes the gap between SLMs and cloud-scale LLMs.
+
+Written in Go with native CGo bindings to [llama.cpp](https://github.com/ggerganov/llama.cpp), OpenEye runs entirely on-device with no cloud dependency.
 
 ---
 
-## Our Goal
+## Architecture
 
-The primary mission of OpenEye is to bridge the "SLM-LLM capability gap" through **architectural innovation** rather than parameter scaling. While modern AI wearables are often closed systems reliant on cloud infrastructure, OpenEye envisions:
-- **Offline-First Intelligence**: Local execution preserves privacy and functions without internet.
-- **Cognitive Augmentation**: Transforming smart glasses from passive displays into proactive cognitive assistants.
-- **Unified Open Standard**: A modular hardware and software stack for worldwide community collaboration.
+```mermaid
+graph TB
+    subgraph CLI["CLI Entry Points"]
+        CHAT[chat]
+        CLIMODE[cli]
+        TUI[tui]
+        SERVE[serve]
+        MEM[memory]
+        BENCH[benchmark / infer-bench]
+        CFGCMD[config]
+    end
+
+    subgraph PIPELINE["Pipeline Orchestration"]
+        CTX[Context Builder]
+        SUM[Summarizer]
+        IMG[Image Processor]
+    end
+
+    subgraph MEMORY["Memory System"]
+        OMEM["Omem Engine<br/>(atomic encoding, multi-view<br/>indexing, entity graph,<br/>episodes, rolling summary)"]
+        MEM0["Mem0 Engine<br/>(fact extraction, memory<br/>updates, entity graph)"]
+        VS[Vector Store<br/>DuckDB]
+        SC[Sliding Context]
+    end
+
+    subgraph RETRIEVAL["Retrieval"]
+        RAG["RAG<br/>(hybrid: semantic +<br/>keyword + recency)"]
+        EMB["Embedding Provider"]
+    end
+
+    subgraph RUNTIME["Runtime Adapter Layer"]
+        REG[Registry]
+        NATIVE["Native CGo Adapter<br/>(prompt caching, vision)"]
+        HTTP["HTTP Adapter<br/>(llama.cpp server)"]
+    end
+
+    subgraph CGO["Native CGo Binding Stack"]
+        GOWRAP["Go Wrappers<br/>(llama.go, vision.go)"]
+        CBIND["C Bindings<br/>(binding.c, binding_vision.c)"]
+        LLAMA["llama.cpp<br/>(llama.h)"]
+        MTMD["mtmd<br/>(vision/multimodal)"]
+    end
+
+    subgraph TRANSPORT["Wearable Transport"]
+        SERVER[TCP Server]
+        CLIENT[TCP Client<br/>ESP32 / Wearables]
+    end
+
+    CLI --> PIPELINE
+    PIPELINE --> CTX
+    PIPELINE --> SUM
+    PIPELINE --> IMG
+    CTX --> MEMORY
+    CTX --> RETRIEVAL
+    EMB --> RUNTIME
+    PIPELINE --> RUNTIME
+    REG --> NATIVE
+    REG --> HTTP
+    NATIVE --> GOWRAP
+    GOWRAP --> CBIND
+    CBIND --> LLAMA
+    CBIND --> MTMD
+    SERVE --> SERVER
+    SERVER --> PIPELINE
+    CLIENT -.->|TCP| SERVER
+    RAG --> EMB
+    OMEM --> EMB
+    MEM0 --> EMB
+```
+
+### Key Design Decisions
+
+- **Runtime adapter pattern**: Pluggable backends behind a common `Adapter` interface (`Generate`, `Stream`, `Close`). Switch between native CGo and HTTP with a config change.
+- **Custom C bindings**: Thin `binding.h/c` wrapping llama.h directly -- not a third-party Go binding library.
+- **Build tags**: Native CGo code compiles only with `-tags native`, so the HTTP-only build has zero C dependencies.
+- **Pointer bools in config**: `*bool` for fields like `Enabled`, `Mmap`, `FlashAttention` so YAML can explicitly set `false` (vs. Go zero-value ambiguity).
+- **Immutable model handle**: Context captures model handle at construction time to prevent TOCTOU races.
 
 ---
 
-## Key Achievements & Findings
+## Omem (Omni Memory) Architecture
 
-Our research, documented in the [Paper/](Paper/) directory, highlights several breakthroughs:
+Omem is a novel four-pillar memory system engineered for edge SLMs. It decouples knowledge from model size, letting 1B-3B parameter models perform complex reasoning.
 
-### 1. Omem (Omni Memory) Architecture
-We developed **Omem**, a novel four-pillar memory architecture engineered for edge-based SLMs. It decouples knowledge from model size, allowing 1B-3B parameter models to perform complex reasoning tasks.
-- **Atomic Encoding**: Uses coreference resolution and temporal anchoring to ensure stored facts remain interpretable in isolation.
-- **Multi-View Indexing**: Combines semantic (vector), lexical (BM25), and symbolic (graph) retrieval, achieving **85% recall** (a 25% improvement over vector-only approaches).
-- **Adaptive Retrieval**: Dynamically scales search depth based on query complexity, avoiding unnecessary LLM overhead.
-- **Rolling Summarization**: Maintains long-term context while preventing linear token growth, preserving >70% long-range recall.
+| Pillar | Description |
+|--------|-------------|
+| **Atomic Encoding** | Coreference resolution + temporal anchoring -- stored facts remain interpretable in isolation |
+| **Multi-View Indexing** | Semantic (vector) + lexical (BM25) + symbolic (graph) retrieval -- 85% recall, 25% over vector-only |
+| **Adaptive Retrieval** | Dynamically scales search depth by query complexity, avoiding unnecessary LLM overhead |
+| **Rolling Summarization** | Maintains long-term context without linear token growth -- >70% long-range recall after 50+ turns |
 
-### 2. Efficiency Breakthroughs
-- **Performance**: Omem is **4x faster** than leading alternatives like Mem0, with retrieval latencies dropping from ~50ms to **~12ms** (P50) and **~35ms** (P95) on optimized hardware.
-- **Token Optimization**: Reduced storage redundancy by **~30%** through atomic deduplication and capped context growth, enabling stable, constant-time performance regardless of conversation length.
-- **Edge Viability**: Verified real-time inference on **Raspberry Pi 4 (4GB) and Pi 5** using **Q4_K_M quantization** for 1B-3B parameter models.
+**Performance**: 4x faster than Mem0 -- P50 retrieval latency ~12ms, P95 ~35ms. ~30% storage reduction via atomic deduplication.
 
-### 3. Scientific Validations
-- **Complexity-Aware Accuracy**: Validated against a 100-query corpus spanning simple lookup, multi-fact aggregation, and multi-hop reasoning. Omem maintains high recall even in "Complex" reasoning scenarios where standard RAG fails.
-- **Ablation Proven**: Extensive ablation studies (8 distinct configurations) proved that the combination of **Entity Relationship Graphs** and **BM25 Lexical Search** is critical for reaching the 85% recall threshold.
-- **Memory Consolidation**: Demonstrated that "Rolling Summaries" can preserve **>70% long-range recall** even after 50+ turns of conversation, effectively mimicking human-like memory consolidation.
-
----
-
-## Architecture Overview
-
-OpenEye is built with a clean separation of concerns in Go:
-- **[internal/cli](internal/cli)**: Robust user-facing entry point with `chat`, `tui`, `serve`, and `memory` commands.
-- **[internal/context/memory](internal/context/memory)**: Implementation of the Omem engine and adapters for various memory systems.
-- **[internal/pipeline](internal/pipeline)**: The orchestration layer that handles context building and runtime execution.
-- **[internal/rag](internal/rag)**: High-performance retrieval-augmented generation for local document corpora.
-- **[internal/runtime](internal/runtime)**: Model-agnostic execution layer supporting various LLM backends (defaulting to llama.cpp).
-- **[client/server](client/)**: TCP-based transport for connecting lightweight wearables (like ESP32) to powerful edge hosts.
+See the [Paper/](Paper/) directory for full research documentation and ablation studies.
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
-- [Go](https://go.dev/) 1.21+
-- An LLM backend (e.g., [llama.cpp](https://github.com/ggerganov/llama.cpp) server running locally)
 
-### Installation
+- [Go](https://go.dev/) 1.24+
+- CMake 3.16+ and a C/C++ compiler (for native backend)
+- **For HTTP backend only**: A running [llama.cpp server](https://github.com/ggerganov/llama.cpp) (no C compiler needed)
+- GGUF model files (Q4_K_M quantization recommended for edge devices)
+
+### Quick Start
+
 ```bash
-git clone https://github.com/your-username/OpenEye.git
+git clone --recurse-submodules https://github.com/theawakener0/OpenEye.git
 cd OpenEye
-go build -o openeye
+
+# Build everything (llama.cpp + OpenEye native backend)
+make native
+
+# Or HTTP-only build (no C dependencies)
+make http
 ```
 
-### Usage
-- **Interactive Chat**: `./openeye chat --message "Who am I?"`
-- **TUI Mode**: `./openeye tui`
-- **CLI Mode**: `./openeye cli`
-- **Background Server**: `./openeye serve` (Starts the TCP bridge for wearable clients)
-- **Manage Memory**: `./openeye memory list`
+If you cloned without `--recurse-submodules`, run `make setup` to fetch and build llama.cpp.
+
+### Available Make Targets
+
+| Target | Description |
+|--------|-------------|
+| `make native` | Build llama.cpp (if needed) + OpenEye with native CGo backend |
+| `make http` | Build OpenEye HTTP-only -- no C compiler needed |
+| `make setup` | Initialize submodule + build llama.cpp static libraries |
+| `make test` | Run all Go tests |
+| `make bench` | Run memory system benchmarks |
+| `make clean` | Remove Go build artifacts |
+| `make clean-llama` | Remove llama.cpp build directory |
+| `make clean-all` | Remove all build artifacts |
+
+**GPU acceleration** (optional):
+
+```bash
+make setup CUDA=1      # NVIDIA CUDA
+make setup VULKAN=1    # Vulkan
+make native            # then build OpenEye
+```
+
+### Configuration
+
+OpenEye reads `openeye.yaml` from the working directory. Key sections:
+
+```yaml
+runtime:
+  backend: native              # or "http"
+  native:
+    model_path: "models/your-model-Q4_K_M.gguf"
+    context_size: 2048
+    threads: 4
+    warmup: true
+    # mmproj_path: "models/mmproj.gguf"  # for vision
+  http:
+    base_url: "http://127.0.0.1:42069"
+
+memory:
+  omem:
+    enabled: true              # recommended memory engine
+  mem0:
+    enabled: false             # legacy alternative
+
+embedding:
+  enabled: true
+  backend: "native"
+  native:
+    model_path: "models/all-MiniLM-L6-v2-Q4_K_M.gguf"
+```
+
+Run `./openeye config` to see the fully resolved configuration.
+
+All settings can be overridden with environment variables (e.g., `APP_NATIVE_MODEL`, `APP_NATIVE_CTX_SIZE`, `APP_LLM_BASEURL`). See `internal/config/config.go` for the full list.
+
+---
+
+## Usage
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `chat` | Single prompt against the runtime |
+| `cli` | Interactive ANSI conversation mode |
+| `tui` | Interactive Charm-based TUI with Markdown rendering |
+| `serve` | Start TCP server for wearable clients |
+| `memory` | Inspect and manage conversation memory |
+| `benchmark` | Run memory system benchmarks (omem vs legacy) |
+| `infer-bench` | Run inference benchmarks (TTFT, TPS, cache effectiveness) |
+| `config` | Show resolved configuration |
+
+### Examples
+
+```bash
+# Single prompt
+./openeye chat "What is the capital of France?"
+./openeye chat --message "Explain quantum entanglement" --stats
+
+# Vision / multimodal (requires mmproj model)
+./openeye chat --image photo.jpg "What do you see?"
+./openeye chat --image "img1.jpg,img2.jpg" "Compare these images"
+
+# Interactive modes
+./openeye cli                  # Traditional ANSI terminal
+./openeye tui                  # Modern TUI with Markdown support
+
+# Server mode (for ESP32 / wearable clients)
+./openeye serve
+
+# Memory management
+./openeye memory --stats
+./openeye memory --search "project deadlines" --search-limit 10
+./openeye memory --compress
+
+# Benchmarking
+./openeye benchmark --turns 50 --recall 10 --output results/
+./openeye infer-bench --iterations 10 --max-tokens 256 --verbose
+```
+
+### Interactive Mode Commands
+
+In `cli` and `tui` modes, use these slash commands:
+
+```
+/help            Show help
+/config          Show session configuration
+/set <p> <v>     Set parameter (stream, stats, rag, summary, vector, rag-limit, memory-limit)
+/stats           Show memory statistics
+/compress        Trigger memory compression
+/image <path>    Attach an image
+/images          List attached images
+/clear-images    Clear attached images
+/exit            Exit
+```
+
+---
+
+## Performance
+
+- **Omem retrieval**: P50 ~12ms, P95 ~35ms (4x faster than Mem0)
+- **Token efficiency**: ~30% storage reduction via atomic deduplication
+- **Prompt caching**: KV prefix reuse reduces TTFT on repeated/similar prompts
+- **Adaptive context budget**: Pipeline computes history budget from native context size
+- **Edge verified**: Real-time inference on Raspberry Pi 4 (4GB) and Pi 5 with Q4_K_M quantization
+
+Use `infer-bench` to measure TTFT, generation TPS, and cache effectiveness on your hardware.
 
 ---
 
 ## Roadmap
 
-- **Phase 1 (Done)**: Functional prototype on ESP32 + Termux, Go-based pipeline, and initial Omem implementation.
-- **Phase 2 (Current)**: Transition to custom PCB designs with expanded sensor arrays and enhanced power management.
-- **Phase 3 (Next)**: Integration of high-performance compute modules (RPi 5 class) for fully on-device SLM inference and advanced multimodal processing.
+- **Phase 1** (Done): Functional prototype -- Go pipeline, Omem, ESP32 + Termux
+- **Phase 2** (Done): Native CGo inference, vision/multimodal, BERT embeddings, prompt caching
+- **Phase 3** (Current): Custom PCB designs, expanded sensor arrays, power management
 
-### Future Research Directions
-- **Memory Consolidation**: Implementing "offline" consolidation (resembling sleep) to improve SLM memory quality.
-- **Federated Memory**: Enabling multiple edge devices to share anonymized memory patterns.
-- **Cross-Session Transfer**: Improving performance by transferring episodic memories across different conversation domains.
-- **Neuromorphic Integration**: Exploring spiking neural networks for optimal memory storage.
+### Research Directions
 
+- Memory consolidation ("offline sleep" for SLM memory quality)
+- Federated memory across edge devices
+- Cross-session episodic transfer
+- Neuromorphic integration (spiking neural networks for memory storage)
 
-*“OpenEye aims not merely to develop another wearable device but to initiate a technological revolution... a redefinition of how humanity perceives and interacts with reality.”*
+---
+
+*"OpenEye aims not merely to develop another wearable device but to initiate a technological revolution -- a redefinition of how humanity perceives and interacts with reality."*

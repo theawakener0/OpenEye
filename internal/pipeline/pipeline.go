@@ -106,7 +106,7 @@ func New(cfg config.Config, registry runtime.Registry) (*Pipeline, error) {
 	// Initialize Omem long-term memory if enabled
 	var omemAdapter *omem.Adapter
 	var omemHook *omem.PipelineHook
-	if cfg.Memory.Omem.Enabled && embedder != nil {
+	if cfg.Memory.Omem.Enabled != nil && *cfg.Memory.Omem.Enabled && embedder != nil {
 		var err error
 		omemAdapter, err = omem.NewAdapterFromConfig(cfg.Memory.Omem, mgr, embedder)
 		if err != nil {
@@ -225,7 +225,7 @@ func (w *summarizerProviderWrapper) Summarize(ctx context.Context, texts []strin
 		transcript.WriteString("\n")
 	}
 
-	prompt := fmt.Sprintf(`Summarise this following conservation into keypoints:
+	prompt := fmt.Sprintf(`Summarise the following conversation into keypoints:
 		%s
 		`, transcript.String())
 
@@ -328,7 +328,7 @@ func (p *Pipeline) GetMemoryStats(ctx context.Context) (map[string]interface{}, 
 	stats["vector_enabled"] = p.cfg.Memory.VectorEnabled
 	stats["rag_enabled"] = p.cfg.RAG.Enabled
 	stats["compression_enabled"] = p.cfg.Memory.CompressionEnabled
-	stats["omem_enabled"] = p.cfg.Memory.Omem.Enabled
+	stats["omem_enabled"] = p.cfg.Memory.Omem.Enabled != nil && *p.cfg.Memory.Omem.Enabled
 
 	return stats, nil
 }
@@ -481,6 +481,21 @@ func (p *Pipeline) Respond(ctx context.Context, message string, images []string,
 	ctxBuilder.SetHistory(history)
 	ctxBuilder.SetTemplatePath(p.cfg.Conversation.TemplatePath)
 
+	// Adaptive context budget: when using the native backend with a known
+	// context size, compute a character budget for conversation history so we
+	// don't overflow the model's context window.  Reserve ~25% of the context
+	// for system prompt, summary, knowledge, and response generation; the
+	// remaining 75% is available for history.  Rough approximation:
+	// 1 token ≈ 3.5 characters for English text.
+	if p.cfg.Runtime.Backend == "native" && p.cfg.Runtime.Native.ContextSize > 0 {
+		ctxSize := p.cfg.Runtime.Native.ContextSize
+		historyBudget := int(float64(ctxSize) * 0.75 * 3.5)
+		if historyBudget < 500 {
+			historyBudget = 500 // absolute minimum
+		}
+		ctxBuilder.MaxHistoryChars = historyBudget
+	}
+
 	// Build combined memory context: omem (long-term) + summary + vector (short-term)
 	combinedContext := omem.BuildEnrichedContext(omemContext, summary, vectorContext)
 	if combinedContext != "" {
@@ -522,12 +537,17 @@ func (p *Pipeline) Respond(ctx context.Context, message string, images []string,
 
 	if opts.Stream {
 		var builder strings.Builder
+		var streamStats runtime.Stats
 		streamCallback := func(evt runtime.StreamEvent) error {
 			if evt.Err != nil {
 				return evt.Err
 			}
 			if !evt.Final {
 				builder.WriteString(evt.Token)
+			}
+			// Capture stats from the final event so they propagate to the Result.
+			if evt.Final && evt.Stats != nil {
+				streamStats = *evt.Stats
 			}
 			if opts.StreamCallback != nil {
 				return opts.StreamCallback(evt)
@@ -557,7 +577,7 @@ func (p *Pipeline) Respond(ctx context.Context, message string, images []string,
 			p.omemHook.OnAfterGenerate(ctx, normalized, text, turnID)
 		}
 
-		result := Result{Text: text, Summary: summary, Retrieved: retrieved}
+		result := Result{Text: text, Stats: streamStats, Summary: summary, Retrieved: retrieved}
 		p.responseCache.Store(cacheKey, result)
 		return result, nil
 	}

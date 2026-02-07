@@ -25,9 +25,10 @@ type Config struct {
 
 // RuntimeConfig selects which backend implementation to use and its settings.
 type RuntimeConfig struct {
-	Backend  string             `yaml:"backend"`
-	HTTP     HTTPBackendConfig  `yaml:"http"`
-	Defaults GenerationDefaults `yaml:"defaults"`
+	Backend  string              `yaml:"backend"`
+	HTTP     HTTPBackendConfig   `yaml:"http"`
+	Native   NativeBackendConfig `yaml:"native"`
+	Defaults GenerationDefaults  `yaml:"defaults"`
 }
 
 // GenerationDefaults allows overriding common inference parameters globally.
@@ -40,6 +41,23 @@ type GenerationDefaults struct {
 	RepeatPenalty float64  `yaml:"repeat_penalty"`
 	RepeatLastN   int      `yaml:"repeat_last_n"`
 	Stop          []string `yaml:"stop"`
+}
+
+// NativeBackendConfig configures the native llama.cpp backend used when
+// backend is set to "native" and the binary is compiled with -tags native.
+type NativeBackendConfig struct {
+	ModelPath      string `yaml:"model_path"`
+	MmprojPath     string `yaml:"mmproj_path"` // Path to mmproj GGUF for vision/multimodal
+	ContextSize    int    `yaml:"context_size"`
+	BatchSize      int    `yaml:"batch_size"`
+	Threads        int    `yaml:"threads"`
+	ThreadsBatch   int    `yaml:"threads_batch"`
+	GPULayers      int    `yaml:"gpu_layers"`
+	Mmap           *bool  `yaml:"mmap"`
+	Mlock          *bool  `yaml:"mlock"`
+	FlashAttention *bool  `yaml:"flash_attention"`
+	Warmup         bool   `yaml:"warmup"`
+	WarmupTokens   int    `yaml:"warmup_tokens"` // 0=single BOS token, >0=multi-token warmup
 }
 
 // HTTPBackendConfig configures the default HTTP completion backend.
@@ -82,7 +100,7 @@ type MemoryConfig struct {
 // OmemConfig configures the Omem (Optimal Memory) advanced long-term memory system.
 // Omem combines techniques from SimpleMem, HippoRAG, and Zep for efficient SLM memory.
 type OmemConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled *bool `yaml:"enabled"`
 
 	// Storage configuration
 	Storage OmemStorageConfig `yaml:"storage"`
@@ -195,7 +213,7 @@ type OmemParallelConfig struct {
 
 // Mem0Config configures the mem0-style intelligent memory system.
 type Mem0Config struct {
-	Enabled    bool                 `yaml:"enabled"`
+	Enabled    *bool                `yaml:"enabled"`
 	Storage    Mem0StorageConfig    `yaml:"storage"`
 	Extraction Mem0ExtractionConfig `yaml:"extraction"`
 	Updates    Mem0UpdatesConfig    `yaml:"updates"`
@@ -268,7 +286,7 @@ type Mem0SummaryConfig struct {
 type ServerConfig struct {
 	Host    string `yaml:"host"`
 	Port    int    `yaml:"port"`
-	Enabled bool   `yaml:"enabled"`
+	Enabled *bool  `yaml:"enabled"`
 }
 
 // ConversationConfig governs how the prompt context is assembled.
@@ -319,9 +337,22 @@ type SummarizerConfig struct {
 
 // EmbeddingConfig captures settings for semantic embedding providers.
 type EmbeddingConfig struct {
-	Enabled  bool                    `yaml:"enabled"`
+	Enabled  *bool                   `yaml:"enabled"`
 	Backend  string                  `yaml:"backend"`
 	LlamaCpp LlamaCppEmbeddingConfig `yaml:"llamacpp"`
+	Native   NativeEmbeddingConfig   `yaml:"native"`
+}
+
+// NativeEmbeddingConfig configures the native in-process embedding provider.
+// Used when embedding.backend is "native" and the binary is compiled with -tags native.
+type NativeEmbeddingConfig struct {
+	ModelPath   string `yaml:"model_path"`
+	ContextSize int    `yaml:"context_size"`
+	BatchSize   int    `yaml:"batch_size"`
+	Threads     int    `yaml:"threads"`
+	GPULayers   int    `yaml:"gpu_layers"`
+	Mmap        *bool  `yaml:"mmap"`
+	Mlock       *bool  `yaml:"mlock"`
 }
 
 // LlamaCppEmbeddingConfig configures llama.cpp embedding server usage.
@@ -352,6 +383,10 @@ type ImageConfig struct {
 }
 
 const defaultConfigFile = "openeye.yaml"
+
+// boolPtr returns a pointer to the given bool value.
+// Used for *bool config fields that need to distinguish "not set" from "false".
+func boolPtr(b bool) *bool { return &b }
 
 // Default returns a Config pre-populated with opinionated defaults for local SLMs.
 func Default() Config {
@@ -392,7 +427,7 @@ func Default() Config {
 			AutoCompress:       true,
 			CompressEveryN:     50,
 			Mem0: Mem0Config{
-				Enabled: true,
+				Enabled: boolPtr(true),
 				Storage: Mem0StorageConfig{
 					DBPath:          "openeye_mem0.duckdb",
 					EmbeddingDim:    384,
@@ -443,7 +478,7 @@ func Default() Config {
 				},
 			},
 			Omem: OmemConfig{
-				Enabled: true,
+				Enabled: boolPtr(true),
 				Storage: OmemStorageConfig{
 					DBPath:          "openeye_omem.duckdb",
 					MaxFacts:        10000,
@@ -517,7 +552,7 @@ func Default() Config {
 		Server: ServerConfig{
 			Host:    "127.0.0.1",
 			Port:    42067,
-			Enabled: true,
+			Enabled: boolPtr(true),
 		},
 		Conversation: ConversationConfig{},
 		RAG: RAGConfig{
@@ -552,7 +587,7 @@ func Default() Config {
 			},
 		},
 		Embedding: EmbeddingConfig{
-			Enabled: false,
+			Enabled: boolPtr(false),
 			Backend: "llamacpp",
 			LlamaCpp: LlamaCppEmbeddingConfig{
 				BaseURL: "http://127.0.0.1:8080",
@@ -613,6 +648,16 @@ func loadFile(path string) (Config, error) {
 	return cfg, nil
 }
 
+// merge overlays non-zero override values onto the base config.
+//
+// KNOWN LIMITATION: Most boolean fields (VectorEnabled, CompressionEnabled,
+// AutoCompress, RAG.Enabled, etc.) can only be toggled ON via YAML override,
+// never OFF. This is because Go's zero value for bool is false, making it
+// impossible to distinguish "not set" from "explicitly set to false" without
+// using *bool pointer fields. The following critical boolean fields use *bool
+// and CAN be explicitly set to false: Server.Enabled, Embedding.Enabled,
+// Mem0.Enabled, Omem.Enabled, plus NativeConfig's Mmap/Mlock/FlashAttention.
+// Extending this pattern to all boolean config fields is a future refactor.
 func merge(base, override Config) Config {
 	result := base
 
@@ -624,6 +669,44 @@ func merge(base, override Config) Config {
 	}
 	if override.Runtime.HTTP.Timeout != "" {
 		result.Runtime.HTTP.Timeout = override.Runtime.HTTP.Timeout
+	}
+
+	// Merge Native backend config.
+	if override.Runtime.Native.ModelPath != "" {
+		result.Runtime.Native.ModelPath = override.Runtime.Native.ModelPath
+	}
+	if override.Runtime.Native.MmprojPath != "" {
+		result.Runtime.Native.MmprojPath = override.Runtime.Native.MmprojPath
+	}
+	if override.Runtime.Native.ContextSize != 0 {
+		result.Runtime.Native.ContextSize = override.Runtime.Native.ContextSize
+	}
+	if override.Runtime.Native.BatchSize != 0 {
+		result.Runtime.Native.BatchSize = override.Runtime.Native.BatchSize
+	}
+	if override.Runtime.Native.Threads != 0 {
+		result.Runtime.Native.Threads = override.Runtime.Native.Threads
+	}
+	if override.Runtime.Native.ThreadsBatch != 0 {
+		result.Runtime.Native.ThreadsBatch = override.Runtime.Native.ThreadsBatch
+	}
+	if override.Runtime.Native.GPULayers != 0 {
+		result.Runtime.Native.GPULayers = override.Runtime.Native.GPULayers
+	}
+	if override.Runtime.Native.Mmap != nil {
+		result.Runtime.Native.Mmap = override.Runtime.Native.Mmap
+	}
+	if override.Runtime.Native.Mlock != nil {
+		result.Runtime.Native.Mlock = override.Runtime.Native.Mlock
+	}
+	if override.Runtime.Native.FlashAttention != nil {
+		result.Runtime.Native.FlashAttention = override.Runtime.Native.FlashAttention
+	}
+	if override.Runtime.Native.Warmup {
+		result.Runtime.Native.Warmup = true
+	}
+	if override.Runtime.Native.WarmupTokens != 0 {
+		result.Runtime.Native.WarmupTokens = override.Runtime.Native.WarmupTokens
 	}
 
 	d := override.Runtime.Defaults
@@ -716,7 +799,7 @@ func merge(base, override Config) Config {
 	if override.Server.Port != 0 {
 		result.Server.Port = override.Server.Port
 	}
-	if override.Server.Enabled {
+	if override.Server.Enabled != nil {
 		result.Server.Enabled = override.Server.Enabled
 	}
 
@@ -804,8 +887,8 @@ func merge(base, override Config) Config {
 		result.Assistants.Summarizer.MaxTranscriptTokens = override.Assistants.Summarizer.MaxTranscriptTokens
 	}
 
-	if override.Embedding.Enabled {
-		result.Embedding.Enabled = true
+	if override.Embedding.Enabled != nil {
+		result.Embedding.Enabled = override.Embedding.Enabled
 	}
 	if override.Embedding.Backend != "" {
 		result.Embedding.Backend = override.Embedding.Backend
@@ -819,6 +902,27 @@ func merge(base, override Config) Config {
 	if override.Embedding.LlamaCpp.Timeout != "" {
 		result.Embedding.LlamaCpp.Timeout = override.Embedding.LlamaCpp.Timeout
 	}
+	if override.Embedding.Native.ModelPath != "" {
+		result.Embedding.Native.ModelPath = override.Embedding.Native.ModelPath
+	}
+	if override.Embedding.Native.ContextSize != 0 {
+		result.Embedding.Native.ContextSize = override.Embedding.Native.ContextSize
+	}
+	if override.Embedding.Native.BatchSize != 0 {
+		result.Embedding.Native.BatchSize = override.Embedding.Native.BatchSize
+	}
+	if override.Embedding.Native.Threads != 0 {
+		result.Embedding.Native.Threads = override.Embedding.Native.Threads
+	}
+	if override.Embedding.Native.GPULayers != 0 {
+		result.Embedding.Native.GPULayers = override.Embedding.Native.GPULayers
+	}
+	if override.Embedding.Native.Mmap != nil {
+		result.Embedding.Native.Mmap = override.Embedding.Native.Mmap
+	}
+	if override.Embedding.Native.Mlock != nil {
+		result.Embedding.Native.Mlock = override.Embedding.Native.Mlock
+	}
 
 	return result
 }
@@ -826,6 +930,27 @@ func merge(base, override Config) Config {
 func applyEnvOverrides(cfg *Config) {
 	if v := strings.TrimSpace(os.Getenv("APP_LLM_BASEURL")); v != "" {
 		cfg.Runtime.HTTP.BaseURL = v
+	}
+	if v := strings.TrimSpace(os.Getenv("APP_NATIVE_MODEL")); v != "" {
+		cfg.Runtime.Native.ModelPath = v
+	}
+	if v := strings.TrimSpace(os.Getenv("APP_NATIVE_MMPROJ")); v != "" {
+		cfg.Runtime.Native.MmprojPath = v
+	}
+	if v := strings.TrimSpace(os.Getenv("APP_NATIVE_CTX_SIZE")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Runtime.Native.ContextSize = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("APP_NATIVE_THREADS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Runtime.Native.Threads = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("APP_NATIVE_GPU_LAYERS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.Runtime.Native.GPULayers = n
+		}
 	}
 	if v := strings.TrimSpace(os.Getenv("APP_MEMORY_PATH")); v != "" {
 		cfg.Memory.Path = v
@@ -851,7 +976,7 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := strings.TrimSpace(os.Getenv("APP_SERVER_ENABLED")); v != "" {
 		if enabled, err := strconv.ParseBool(v); err == nil {
-			cfg.Server.Enabled = enabled
+			cfg.Server.Enabled = boolPtr(enabled)
 		}
 	}
 	if v := strings.TrimSpace(os.Getenv("APP_RAG_ENABLED")); v != "" {
@@ -934,7 +1059,7 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := strings.TrimSpace(os.Getenv("APP_EMBEDDING_ENABLED")); v != "" {
 		if enabled, err := strconv.ParseBool(v); err == nil {
-			cfg.Embedding.Enabled = enabled
+			cfg.Embedding.Enabled = boolPtr(enabled)
 		}
 	}
 	if v := strings.TrimSpace(os.Getenv("APP_EMBEDDING_BACKEND")); v != "" {
@@ -953,15 +1078,15 @@ func applyEnvOverrides(cfg *Config) {
 
 // ServerEnabled reports if the TCP server should be started.
 func (c Config) ServerEnabled() bool {
-	return c.Server.Enabled
+	return c.Server.Enabled != nil && *c.Server.Enabled
 }
 
 // mergeMem0Config merges mem0 configuration with overrides.
 func mergeMem0Config(base, override Mem0Config) Mem0Config {
 	result := base
 
-	if override.Enabled {
-		result.Enabled = true
+	if override.Enabled != nil {
+		result.Enabled = override.Enabled
 	}
 
 	// Storage
@@ -1091,8 +1216,8 @@ func mergeMem0Config(base, override Mem0Config) Mem0Config {
 func mergeOmemConfig(base, override OmemConfig) OmemConfig {
 	result := base
 
-	if override.Enabled {
-		result.Enabled = true
+	if override.Enabled != nil {
+		result.Enabled = override.Enabled
 	}
 
 	// Storage

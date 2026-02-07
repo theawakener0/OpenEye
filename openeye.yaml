@@ -2,7 +2,13 @@
 # Copy or modify this file to suit your local environment. Values shown here match the runtime defaults.
 
 runtime:
-  backend: http
+  backend: native
+  native:
+    model_path: "models/LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
+    # mmproj_path: "models/your-model-mmproj.gguf"  # Vision projector for multimodal (optional)
+    context_size: 2048
+    threads: 4
+    warmup: true
   http:
     base_url: "http://127.0.0.1:42069"
     timeout: "0"
@@ -208,7 +214,9 @@ memory:
       enable_async: true                   # Enable background processing
 
 server:
-  host: "0.0.0.0"
+  # SECURITY: Use 127.0.0.1 (loopback) to restrict to local connections only.
+  # Set to 0.0.0.0 only if you need network access AND have a firewall in place.
+  host: "127.0.0.1"
   port: 8080
   enabled: true
 
@@ -250,7 +258,10 @@ assistants:
 
 embedding:
   enabled: true
-  backend: "llamacpp"
+  backend: "native"
+  native:
+    model_path: "models/all-MiniLM-L6-v2-Q4_K_M.gguf"
+    threads: 4
   llamacpp:
     base_url: "http://127.0.0.1:42068"
     model: ""

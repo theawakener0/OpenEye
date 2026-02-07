@@ -38,7 +38,7 @@ func NewAdapter(cfg config.Mem0Config, manager *runtime.Manager, embedder embedd
 // configFromMem0Config converts the config package type to mem0 Config.
 func configFromMem0Config(cfg config.Mem0Config) Config {
 	return Config{
-		Enabled: cfg.Enabled,
+		Enabled: cfg.Enabled != nil && *cfg.Enabled,
 		Storage: StorageConfig{
 			DBPath:          cfg.Storage.DBPath,
 			EmbeddingDim:    cfg.Storage.EmbeddingDim,

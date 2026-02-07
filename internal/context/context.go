@@ -20,6 +20,11 @@ type Context struct {
 	templatePath string
 	summary      string
 	knowledge    []string
+
+	// MaxHistoryChars caps the character budget for conversation history.
+	// 0 uses the default of 8000 characters. Set lower for edge devices
+	// with small context windows (e.g., 2048 tokens ~ 5000 chars).
+	MaxHistoryChars int
 }
 
 func NewContext(sysMsg string, prompt string) *Context {
@@ -91,7 +96,7 @@ func (c *Context) GetSysMsg() string {
 
 	defaultSysMsg := "You are a helpful AI assistant called OpenEye. Answer the user's questions directly and helpfully. Be concise, factual, and direct in your responses."
 
-//	log.Printf("Using default system message: %s", defaultSysMsg)
+	//	log.Printf("Using default system message: %s", defaultSysMsg)
 	return defaultSysMsg
 }
 
@@ -112,12 +117,12 @@ func (c *Context) FormatChatML() string {
 	var sysBlock strings.Builder
 	sysBlock.WriteString("<|im_start|>\n<|system|>\n")
 	sysBlock.WriteString(c.GetSysMsg())
-	
+
 	if c.summary != "" {
 		sysBlock.WriteString("\n\n<|Memory Summary|>\n")
 		sysBlock.WriteString(c.summary)
 	}
-	
+
 	if len(c.knowledge) > 0 {
 		sysBlock.WriteString("\n\n<|Retrieved Context|>\n")
 		for idx, block := range c.knowledge {
@@ -135,13 +140,15 @@ func (c *Context) FormatChatML() string {
 	// 3. Calculate remaining budget for history
 	// Assuming a safe default context window if we can't measure exactly.
 	// In a real system, we'd use a tokenizer. Here we estimate 1 char ~= 0.3 tokens approx, or just use char limits.
-	// Let's target a conservative 4000 char history window to stay safe for most small models.
-	const maxHistoryChars = 8000 
-	
+	maxHistoryChars := c.MaxHistoryChars
+	if maxHistoryChars <= 0 {
+		maxHistoryChars = 8000 // default for typical models
+	}
+
 	// 4. Build history section backwards until full
 	var historyBlock string
 	currentChars := 0
-	
+
 	// Iterate backwards
 	for i := len(c.history) - 1; i >= 0; i-- {
 		item := c.history[i]
@@ -152,12 +159,12 @@ func (c *Context) FormatChatML() string {
 		if role == "" {
 			role = "user"
 		}
-		
+
 		entry := fmt.Sprintf("<|im_start|>%s\n%s<|im_end|>\n", role, item.Content)
-		if currentChars + len(entry) > maxHistoryChars {
+		if currentChars+len(entry) > maxHistoryChars {
 			break
 		}
-		
+
 		// Prepend since we are iterating backwards
 		historyBlock = entry + historyBlock
 		currentChars += len(entry)

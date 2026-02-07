@@ -10,9 +10,10 @@ import (
 )
 
 var (
-	logFile   *os.File
-	logDir    string
-	isFileLog bool
+	logFile     *os.File
+	logDir      string
+	logFilePath string
+	isFileLog   bool
 )
 
 // Init initializes logging. If toFile is true, logs are written to a file
@@ -49,6 +50,7 @@ func Init(toFile bool) error {
 
 	log.SetOutput(logFile)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+	logFilePath = logPath
 	isFileLog = true
 
 	log.Printf("=== OpenEye session started ===")
@@ -78,4 +80,10 @@ func GetLogDir() string {
 // IsFileLogging returns true if logging is going to a file.
 func IsFileLogging() bool {
 	return isFileLog
+}
+
+// GetLogFilePath returns the full path to the current log file,
+// or an empty string if file logging is not active.
+func GetLogFilePath() string {
+	return logFilePath
 }

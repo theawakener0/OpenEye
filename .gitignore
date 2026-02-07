@@ -1,0 +1,27 @@
+# Model weights (large binary files)
+models/
+
+# Build artifacts
+benchmark_results/
+*.exe
+llama.cpp/build/
+
+# Runtime and benchmark databases
+*.db
+*.duckdb
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# app
+OpenEye
+openeye
+openeye-native
+
+# OS
+.DS_Store
+Thumbs.db

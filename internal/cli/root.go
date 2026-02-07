@@ -21,8 +21,8 @@ func Execute() int {
 	args := os.Args[1:]
 
 	// Determine if we're running in an interactive mode (need file logging to avoid corrupting display)
-	// Both TUI and CLI modes are interactive and should use file logging
-	useFileLogging := len(args) > 0 && (args[0] == "tui" || args[0] == "cli")
+	// Chat, CLI, and TUI modes should use file logging so only model output appears on screen
+	useFileLogging := len(args) == 0 || (args[0] == "tui" || args[0] == "cli" || args[0] == "chat")
 
 	// Initialize logging (to file for interactive modes, to stderr otherwise)
 	if err := logging.Init(useFileLogging); err != nil {
@@ -56,6 +56,8 @@ func Execute() int {
 		return subcommands.RunMemory(cfg, args[1:])
 	case "benchmark":
 		return subcommands.RunBenchmark(cfg, args[1:])
+	case "infer-bench":
+		return subcommands.RunInferBench(cfg, registry, args[1:])
 	case "config":
 		return subcommands.RunConfig(cfg)
 	case "help", "-h", "--help":
@@ -161,12 +163,14 @@ Usage:
   OpenEye [command] [flags]
 
 Commands:
-  chat      Run a single prompt against the configured runtime
-  cli       Interactive ANSI conversation mode (traditional)
-  tui       Interactive Charm-based TUI (modern, Markdown support)
-  serve     Start the TCP server using runtime + memory pipeline
-  memory    Inspect and manage conversation memory
-  config    Show the current configuration settings
+  chat        Run a single prompt against the configured runtime
+  cli         Interactive ANSI conversation mode (traditional)
+  tui         Interactive Charm-based TUI (modern, Markdown support)
+  serve       Start the TCP server using runtime + memory pipeline
+  memory      Inspect and manage conversation memory
+  benchmark   Run memory system benchmarks (omem/legacy/vector)
+  infer-bench Run inference benchmarks (TTFT, TPS, cache effectiveness)
+  config      Show the current configuration settings
 
 Memory Features:
   - Vector-based semantic search (DuckDB backend)

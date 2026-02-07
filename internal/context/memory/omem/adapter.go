@@ -45,7 +45,7 @@ func configFromOmemConfig(cfg config.OmemConfig) Config {
 	}
 
 	return Config{
-		Enabled: cfg.Enabled,
+		Enabled: cfg.Enabled != nil && *cfg.Enabled,
 
 		Storage: StorageConfig{
 			DBPath:          cfg.Storage.DBPath,

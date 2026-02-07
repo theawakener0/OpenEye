@@ -12,7 +12,7 @@ var ErrStreamingUnsupported = errors.New("runtime: streaming not supported by ad
 // Request captures a model prompt along with tunable generation options.
 type Request struct {
 	Prompt  string
-	Image	[]string
+	Image   []string
 	Options GenerationOptions
 }
 
@@ -42,6 +42,16 @@ type Stats struct {
 	TokensGenerated int
 	TokensCached    int
 	Duration        time.Duration
+
+	// TTFT is the time-to-first-token: how long from request start until
+	// the first generated token was produced. Critical for edge UX.
+	TTFT time.Duration
+
+	// PromptTPS is the prompt processing throughput (tokens/second).
+	PromptTPS float64
+
+	// GenerationTPS is the token generation throughput (tokens/second).
+	GenerationTPS float64
 }
 
 // StreamEvent is emitted for each token or checkpoint during streaming.
@@ -50,6 +60,9 @@ type StreamEvent struct {
 	Index int
 	Final bool
 	Err   error
+
+	// Stats is populated on the final event to report performance metrics.
+	Stats *Stats
 }
 
 // StreamCallback is invoked for each StreamEvent while streaming results.
