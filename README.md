@@ -1,4 +1,4 @@
-# OpenEye: High-Performance Offline AI for Wearables
+# OpenEye: The New Revolution of SLMs
 
 **OpenEye** is an open-source framework for running Small Language Models (SLMs) on edge devices, smart glasses, Raspberry Pi 5, Orange pi, and custom hardware. It provides offline-first, privacy-preserving AI inference with a novel memory architecture that closes the gap between SLMs and cloud-scale LLMs.
 
