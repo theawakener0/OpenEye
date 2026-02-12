@@ -43,6 +43,7 @@ graph TB
     Y --> D
     E --> D
     D --> CLI
+```
 
 ## The Registry Pattern
 
