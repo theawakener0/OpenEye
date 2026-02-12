@@ -72,7 +72,7 @@ graph TB
     CBIND --> MTMD
     SERVE --> SERVER
     SERVER --> PIPELINE
-    CLIENT -.->|TCP| SERVER
+    CLIENT == TCP ==> SERVER
     RAG --> EMB
     OMEM --> EMB
     MEM0 --> EMB
@@ -102,6 +102,122 @@ Omem is a novel four-pillar memory system engineered for edge SLMs. It decouples
 **Performance**: 4x faster than Mem0 -- P50 retrieval latency ~12ms, P95 ~35ms. ~30% storage reduction via atomic deduplication.
 
 See the [Paper/](Paper/) directory for full research documentation and ablation studies.
+
+---
+
+## Extending OpenEye: Plugin Development
+
+OpenEye is designed with a modular, extensible architecture that allows developers to customize and extend virtually every component. Whether you need to add a custom LLM backend, create a new embedding provider, or build a specialized memory system, OpenEye's plugin system provides the foundation.
+
+### Extension Points
+
+| Extension Point | Purpose | Common Use Cases |
+|----------------|---------|-----------------|
+| **Runtime Adapters** | Add new LLM backends | Custom HTTP APIs, local models, specialized inference engines |
+| **Embedding Providers** | Add embedding services | Vector databases, custom embeddings, domain-specific encoders |
+| **Memory Engines** | Customize storage | Alternative databases, distributed stores, specialized memory systems |
+| **RAG Retrievers** | Customize retrieval | Domain-specific search, hybrid search, specialized indexes |
+| **CLI Extensions** | Add CLI commands | Custom workflows, administration tools, integrations |
+| **Image Processors** | Customize image handling | Preprocessing, format conversion, specialized vision pipelines |
+
+### Quick Start
+
+```bash
+# Clone the documentation repository
+cd docs/plugins/
+
+# Or create a new plugin
+mkdir my-openeye-plugin
+cd my-openeye-plugin
+go mod init github.com/yourname/my-openeye-plugin
+```
+
+### Plugin Documentation
+
+Comprehensive developer documentation is available in [`docs/plugins/`](docs/plugins/):
+
+| Document | Description |
+|----------|-------------|
+| **[Index](docs/plugins/index.md)** | Quick start guide, five-minute example, SDK notes |
+| **[Architecture](docs/plugins/architecture.md)** | Deep dive into plugin system internals, registry pattern |
+| **[Runtime Adapters](docs/plugins/runtime-adapters.md)** | Complete guide to building LLM backends with security focus |
+| **[Embedding Providers](docs/plugins/embedding-providers.md)** | Guide to adding custom embedding services |
+| **[Memory Engines](docs/plugins/memory-engines.md)** | Extending memory systems (SQLite, Vector, Omem, Mem0) |
+| **[RAG Retrievers](docs/plugins/custom-retrievers.md)** | Building custom retrieval systems |
+| **[CLI Extensions](docs/plugins/cli-extensions.md)** | Adding custom subcommands |
+| **[Image Processors](docs/plugins/image-processors.md)** | Custom image processing for vision models |
+| **[Best Practices](docs/plugins/best-practices.md)** | Security guidelines, performance tips, testing strategies |
+| **[Troubleshooting](docs/plugins/troubleshooting.md)** | Common issues and solutions |
+| **[Distribution](docs/plugins/distribution.md)** | Packaging and sharing plugins |
+| **[Manifest Format](docs/plugins/manifest.md)** | Plugin metadata and capabilities |
+
+### Code Examples
+
+Working code examples are provided in [`docs/plugins/examples/`](docs/plugins/examples/):
+
+- **[Hello World Adapter](docs/plugins/examples/hello-world-adapter.md)** - Minimal runtime adapter
+- **[Custom HTTP LLM](docs/plugins/examples/custom-http-llm.md)** - Production-ready HTTP adapter
+- **[Custom Embedding](docs/plugins/examples/custom-embedding.md)** - Embedding provider example
+- **[Simple Memory](docs/plugins/examples/simple-memory.md)** - Memory store implementation
+- **[Secure Backend](docs/plugins/examples/secure-http-backend.md)** - Security-focused adapter with SSRF protection
+
+### Example: Hello World Adapter
+
+```go
+package myadapter
+
+import (
+    "context"
+    "OpenEye/internal/config"
+    "OpenEye/internal/runtime"
+)
+
+func init() {
+    runtime.Register("myadapter", newAdapter)
+}
+
+type Adapter struct{ baseURL string }
+
+func newAdapter(cfg config.RuntimeConfig) (runtime.Adapter, error) {
+    return &Adapter{baseURL: cfg.HTTP.BaseURL}, nil
+}
+
+func (a *Adapter) Name() string { return "myadapter" }
+func (a *Adapter) Generate(ctx context.Context, req runtime.Request) (runtime.Response, error) {
+    return runtime.Response{Text: "Hello from my adapter!"}, nil
+}
+func (a *Adapter) Stream(ctx context.Context, req runtime.Request, cb runtime.StreamCallback) error { return nil }
+func (a *Adapter) Close() error { return nil }
+```
+
+Configure it in `openeye.yaml`:
+
+```yaml
+runtime:
+  backend: "myadapter"
+  http:
+    base_url: "https://api.example.com"
+```
+
+### Security First
+
+All plugins should follow security best practices:
+
+- **Validate all inputs** - Prevent injection attacks
+- **Enforce timeouts** - Prevent hanging requests
+- **Use TLS** - Always validate certificates
+- **Block SSRF** - Prevent access to internal networks
+- **Rate limit** - Prevent abuse
+- **Secure credentials** - Use environment variables, never hardcode
+
+See [Security Best Practices](docs/plugins/best-practices.md#security-guidelines) for comprehensive guidance.
+
+### SDKs for Other Languages
+
+Currently, OpenEye plugins must be written in Go due to type-safe interface requirements. SDKs for other languages are planned:
+
+- Python (using CGO bindings)
+- JavaScript/TypeScript (Node.js addon)
 
 ---
 

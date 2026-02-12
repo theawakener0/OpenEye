@@ -83,6 +83,7 @@ flowchart TB
     
     SF --> RR
     RR --> FR
+```
 
 ## Custom Retriever Example: Domain-Specific Search
 

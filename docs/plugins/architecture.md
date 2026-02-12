@@ -110,6 +110,7 @@ flowchart TB
     NM -->|Lookup| Registry
     Registry -->|Factory| FA
     FA -->|Create| I
+```
 
 ## Plugin Lifecycle
 
@@ -359,6 +360,7 @@ flowchart TB
     Resp --> SM
     Resp --> US
     US --> F["Return to User"]
+```
 
 ## Error Handling Contracts
 

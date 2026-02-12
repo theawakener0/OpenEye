@@ -40,7 +40,9 @@ graph TB
     ST --> T1
     VM --> T2
     LT --> T3
+```
 
+## Short-term Memory (SQLite)
 ## Short-term Memory (SQLite)
 
 The basic memory store uses SQLite for conversation history:
@@ -328,7 +330,9 @@ graph TB
     AR --> DB
     ET --> DB
     RS --> DB
+```
 
+### Omem Adapter Integration
 ### Omem Adapter Integration
 
 OpenEye's Omem uses a pipeline hook pattern:

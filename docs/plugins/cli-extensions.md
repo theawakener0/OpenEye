@@ -34,6 +34,7 @@ graph TB
     Dispatch --> Serve
     Dispatch --> Memory
     Dispatch --> Custom
+```
 
 ## Subcommand Pattern
 

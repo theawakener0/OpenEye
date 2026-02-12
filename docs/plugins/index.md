@@ -173,8 +173,6 @@ Currently, OpenEye plugins must be written in Go due to the type-safe interface 
 |----------|--------|-------|
 | Python | Planned | Using cbindgen/CGO bindings |
 | JavaScript/TypeScript | Planned | Node.js addon |
-| Rust | Planned | Native Rust SDK |
-| Java | Consideration | Requires evaluation |
 
 For language SDKs, plugins would run as external services that OpenEye communicates with via HTTP or stdin/stdout protocol.
 
