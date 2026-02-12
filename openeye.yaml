@@ -6,15 +6,21 @@ runtime:
   native:
     model_path: "models/LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
     # mmproj_path: "models/your-model-mmproj.gguf"  # Vision projector for multimodal (optional)
-    context_size: 2048
+    context_size: 4096                               # INCREASED: Larger context window for unlimited feel
     threads: 4
-    batch_size: 2048                                 # Maximum batch size for prompt processing (increased for long prompts)
+    batch_size: 1024                                 # ADJUSTED: Must be < context_size, optimized for throughput
     # threads_batch: 4                                # Threads for batch processing (defaults to threads)
     warmup: true
     # --- Inference Optimizations ---
     kv_cache_type: "q4_0"                            # KV cache quantization: f16, q8_0, q4_0
-    stream_chunk_size: 3                            # Tokens to buffer before streaming (1=disabled)
-    context_shift: true                             # Auto-shift KV cache when context fills (90% threshold)
+    stream_chunk_size: 1                            # CHANGED: Lower latency for real-time feel (was 3)
+    context_shift: true                             # Auto-shift KV cache when context fills
+    
+    context_shift_threshold: 0.60                    # Proactive shift at 60% (was 75%) - prevents crashes
+    context_shift_discard: 1024                      # Tokens to discard per shift (larger = fewer shifts)
+    context_reserve_ratio: 0.25                      # Reserve 25% of context for new prompts/generation
+    auto_recover_full_kv: true                       # Automatically recover from KV cache full errors
+    max_shift_attempts: 3                            # Maximum retry attempts for context operations
     # draft_model_path: "models/SmolLM2-135M-Instruct-Q4_K_M.gguf"  # DISABLED: Causes sync issues with context clearing
     # speculative_n: 5
   http:
@@ -32,7 +38,7 @@ runtime:
 
 memory:
   path: "openeye_memory.db"
-  turns_to_use: 6
+  turns_to_use: 8                                       # INCREASED: Keep more recent turns in working memory
   
   # Vector Memory Engine (DuckDB-backed) - LEGACY
   # Enables semantic search and long-term memory for SLMs
@@ -41,15 +47,15 @@ memory:
   embedding_dim: 384                    # Embedding dimension (384 for small models, 768 for larger)
   
   # Context Window Management
-  max_context_tokens: 4096              # Maximum tokens for context window
-  reserved_for_prompt: 512              # Tokens reserved for user prompt
-  reserved_for_summary: 256             # Tokens reserved for memory summary
+  max_context_tokens: 8192  
+  reserved_for_prompt: 1024
+  reserved_for_summary: 512
   
-  # Retrieval Settings
-  min_similarity: 0.3                   # Minimum cosine similarity threshold for retrieval
-  sliding_window_size: 50               # Number of candidates to consider for context fitting
-  recency_weight: 0.3                   # Weight for recency in ranking (0-1)
-  relevance_weight: 0.7                 # Weight for semantic relevance in ranking (0-1)
+  # Retrieval Settings - OPTIMIZED for recall
+  min_similarity: 0.25                                  # LOWERED: Retrieve more potentially relevant facts
+  sliding_window_size: 100                              # INCREASED: Consider more candidates
+  recency_weight: 0.4                                   # INCREASED: Favor recent memories slightly more
+  relevance_weight: 0.6                                 # Balanced with recency
   
   # Memory Compression (reduces storage and improves retrieval)
   compression_enabled: true             # Enable automatic memory compression
@@ -124,7 +130,7 @@ memory:
       async: true                         # Refresh in background
 
   # ============================================================================
-  # Omem - OpenEye Memory (NEXT-GEN)
+  # Omem - OpenEye Memory (NEXT-GEN) - ENABLED for unlimited context feel
   # ============================================================================
   # Advanced long-term memory combining SimpleMem, HippoRAG, and Zep techniques.
   # Designed specifically for on-device SLMs (200M-3B parameters).
@@ -136,7 +142,7 @@ memory:
   # - Episode/session management for cross-conversation continuity
   # ============================================================================
   omem:
-    enabled: false
+    enabled: true                                       # ENABLED: Retains facts even when KV cache shifts
     
     # Storage settings (DuckDB-backed)
     storage:
@@ -146,15 +152,14 @@ memory:
       prune_keep_recent: 5000             # Keep this many recent facts when pruning
       enable_fts: true                    # Enable DuckDB Full-Text Search for BM25
     
-    # Atomic Encoder (SimpleMem-inspired)
-    # Converts messy conversation into clean, self-contained facts
+    # Atomic Encoder (SimpleMem-inspired) - OPTIMIZED for comprehensive memory
     atomic_encoder:
       enabled: true
       enable_coreference: true            # Resolve "he/she/it" → actual names
       enable_temporal: true               # Anchor "yesterday" → "2026-01-16"
-      max_facts_per_turn: 10              # Max facts extracted per conversation turn
-      min_fact_importance: 0.3            # Minimum importance threshold (0-1)
-      min_text_length: 10                 # Minimum text length to process
+      max_facts_per_turn: 15              # INCREASED: Extract more facts per turn
+      min_fact_importance: 0.2            # LOWERED: Keep more facts (filter less aggressively)
+      min_text_length: 5                  # LOWERED: Process shorter utterances
       use_llm_for_complex: true           # Use LLM for complex disambiguation
     
     # Multi-View Indexing (Hybrid Retrieval)
@@ -179,18 +184,17 @@ memory:
       use_regex_extraction: true          # Use regex vs LLM for entity extraction
       graph_boost_weight: 0.2             # Boost for graph-connected facts
     
-    # Adaptive Retrieval (Complexity-Aware)
-    # Dynamically adjusts retrieval depth based on query complexity
+    # Adaptive Retrieval (Complexity-Aware) - OPTIMIZED for unlimited context
     retrieval:
-      default_top_k: 5                    # Base number of results
-      complexity_delta: 2.0               # k_dynamic = k_base * (1 + delta * complexity)
-      max_top_k: 20                        # Maximum retrieval depth
-      min_score: 0.3                       # Minimum score threshold
-      max_context_tokens: 1000            # Maximum tokens in retrieved context
+      default_top_k: 10                   # INCREASED: Retrieve more facts by default
+      complexity_delta: 3.0               # INCREASED: More aggressive scaling with complexity
+      max_top_k: 30                       # INCREASED: Higher maximum for complex queries
+      min_score: 0.25                     # LOWERED: Include more marginally relevant facts
+      max_context_tokens: 1500            # INCREASED: More context from retrieved memories
       recency_half_life_hours: 168        # Recency decay half-life (168h = 1 week)
-      importance_weight: 0.15             # Weight for fact importance in scoring
-      recency_weight: 0.1                 # Weight for recency in scoring
-      access_frequency_weight: 0.05       # Weight for access frequency
+      importance_weight: 0.2              # INCREASED: Prioritize important facts
+      recency_weight: 0.15                # INCREASED: Slightly favor recent facts
+      access_frequency_weight: 0.1        # INCREASED: Prioritize frequently accessed memories
       enable_complexity_estimation: true  # Enable zero-LLM query analysis
     
     # Episode/Session Tracking (Zep-inspired)

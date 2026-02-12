@@ -87,6 +87,30 @@ type NativeBackendConfig struct {
 	// fills up. Instead of failing, the oldest portion of the context
 	// is discarded and generation continues. Default: true.
 	ContextShift *bool `yaml:"context_shift"`
+
+	// --- UNLIMITED CONTEXT WINDOW CONFIGURATION ---
+
+	// ContextShiftThreshold is the fraction of context size at which to
+	// trigger a context shift (0.0-1.0). Lower values are more proactive
+	// and prevent crashes. Default: 0.60 (60%).
+	ContextShiftThreshold float64 `yaml:"context_shift_threshold"`
+
+	// ContextShiftDiscard is the number of tokens to discard per shift.
+	// Larger values mean fewer shifts but more content lost. Default: 1024.
+	ContextShiftDiscard int `yaml:"context_shift_discard"`
+
+	// ContextReserveRatio is the fraction of context to reserve for new
+	// prompts and generation (0.0-1.0). Ensures headroom. Default: 0.25 (25%).
+	ContextReserveRatio float64 `yaml:"context_reserve_ratio"`
+
+	// AutoRecoverFullKV enables automatic recovery when the KV cache is full.
+	// When true, the system will shift context and retry instead of failing.
+	// Default: true.
+	AutoRecoverFullKV *bool `yaml:"auto_recover_full_kv"`
+
+	// MaxShiftAttempts is the maximum number of retry attempts for context
+	// shift operations before giving up. Default: 3.
+	MaxShiftAttempts int `yaml:"max_shift_attempts"`
 }
 
 // HTTPBackendConfig configures the default HTTP completion backend.

@@ -282,6 +282,7 @@ func (a *Adapter) Generate(ctx context.Context, req runtime.Request) (runtime.Re
 	// Track prompt token count for stats (vision path estimates differently).
 	var promptTokenCount int
 	var prefixLen int
+	var maxTokens int
 
 	// --- Vision path: images present and vision context available ---
 	if len(req.Image) > 0 && a.vision != nil {
@@ -306,6 +307,12 @@ func (a *Adapter) Generate(ctx context.Context, req runtime.Request) (runtime.Re
 
 	} else {
 		// --- Standard text-only path ---
+
+		// Resolve max tokens for generation EARLY so we can use it for space planning
+		maxTokens := opts.MaxTokens
+		if maxTokens <= 0 {
+			maxTokens = 512
+		}
 
 		// Tokenize the prompt.
 		tokens, err := a.model.Tokenize(req.Prompt, true, true)
@@ -348,8 +355,11 @@ func (a *Adapter) Generate(ctx context.Context, req runtime.Request) (runtime.Re
 		// Evaluate only the new tokens (from prefixLen onwards).
 		newTokens := tokens[prefixLen:]
 		if len(newTokens) > 0 {
-			// Check batch size limits and process in chunks if needed
-			if err := a.evalTokensInChunks(newTokens); err != nil {
+			// Ensure we have space BEFORE evaluating (prevents crashes)
+			a.ensureContextSpace(len(newTokens), maxTokens)
+
+			// Evaluate with automatic recovery on KV cache full
+			if err := a.evalTokensWithRecovery(newTokens, maxTokens); err != nil {
 				// Generation failed before starting; invalidate prompt cache.
 				a.lastPromptTokens = nil
 				return runtime.Response{}, fmt.Errorf("native: eval prompt: %w", err)
@@ -368,10 +378,13 @@ func (a *Adapter) Generate(ctx context.Context, req runtime.Request) (runtime.Re
 		}
 	}
 
-	// Resolve max tokens for generation.
-	maxTokens := opts.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = 512
+	// maxTokens already resolved above for text path, only resolve here for vision path
+	// Check if we're in vision mode (promptTokenCount was set via vision path)
+	if promptTokenCount > 0 && len(req.Image) > 0 {
+		maxTokens = opts.MaxTokens
+		if maxTokens <= 0 {
+			maxTokens = 512
+		}
 	}
 
 	// Context window management: shift if near-full, then cap max tokens.
@@ -381,8 +394,15 @@ func (a *Adapter) Generate(ctx context.Context, req runtime.Request) (runtime.Re
 	if currentPos+maxTokens > ctxSize {
 		available := ctxSize - currentPos
 		if available <= 0 {
-			a.lastPromptTokens = nil
-			return runtime.Response{}, fmt.Errorf("native: context window full (%d/%d tokens used by prompt), no room for generation", currentPos, ctxSize)
+			// Instead of failing, try aggressive context shift
+			log.Printf("native: context full at start of generation, attempting emergency shift...")
+			a.ensureContextSpace(maxTokens, maxTokens)
+			currentPos = int(a.ctx.Pos())
+			available = ctxSize - currentPos
+			if available <= 0 {
+				a.lastPromptTokens = nil
+				return runtime.Response{}, fmt.Errorf("native: context window full (%d/%d tokens used by prompt), no room for generation", currentPos, ctxSize)
+			}
 		}
 		maxTokens = available
 	}
@@ -593,6 +613,7 @@ func (a *Adapter) Stream(ctx context.Context, req runtime.Request, cb runtime.St
 	// Track prompt token count for stats (vision path estimates differently).
 	var promptTokenCount int
 	var prefixLen int
+	var maxTokens int
 
 	// --- Vision path: images present and vision context available ---
 	if len(req.Image) > 0 && a.vision != nil {
@@ -616,6 +637,12 @@ func (a *Adapter) Stream(ctx context.Context, req runtime.Request, cb runtime.St
 
 	} else {
 		// --- Standard text-only path ---
+
+		// Resolve max tokens for generation EARLY
+		maxTokens = opts.MaxTokens
+		if maxTokens <= 0 {
+			maxTokens = 512
+		}
 
 		// Tokenize prompt.
 		tokens, err := a.model.Tokenize(req.Prompt, true, true)
@@ -653,8 +680,11 @@ func (a *Adapter) Stream(ctx context.Context, req runtime.Request, cb runtime.St
 
 		newTokens := tokens[prefixLen:]
 		if len(newTokens) > 0 {
-			// Check batch size limits and process in chunks if needed
-			if err := a.evalTokensInChunks(newTokens); err != nil {
+			// Ensure we have space BEFORE evaluating (prevents crashes)
+			a.ensureContextSpace(len(newTokens), opts.MaxTokens)
+
+			// Evaluate with automatic recovery on KV cache full
+			if err := a.evalTokensWithRecovery(newTokens, opts.MaxTokens); err != nil {
 				a.lastPromptTokens = nil
 				return fmt.Errorf("native: eval prompt: %w", err)
 			}
@@ -672,10 +702,13 @@ func (a *Adapter) Stream(ctx context.Context, req runtime.Request, cb runtime.St
 		}
 	}
 
-	// Resolve max tokens for generation.
-	maxTokens := opts.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = 512
+	// maxTokens already resolved above for text path, only resolve here for vision path
+	// Check if we're in vision mode (promptTokenCount was set via vision path)
+	if promptTokenCount > 0 && len(req.Image) > 0 {
+		maxTokens = opts.MaxTokens
+		if maxTokens <= 0 {
+			maxTokens = 512
+		}
 	}
 
 	// Context window management: shift if near-full, then cap max tokens.
@@ -685,8 +718,15 @@ func (a *Adapter) Stream(ctx context.Context, req runtime.Request, cb runtime.St
 	if currentPos+maxTokens > ctxSize {
 		available := ctxSize - currentPos
 		if available <= 0 {
-			a.lastPromptTokens = nil
-			return fmt.Errorf("native: context window full (%d/%d tokens used by prompt), no room for generation", currentPos, ctxSize)
+			// Instead of failing, try aggressive context shift
+			log.Printf("native: context full at start of generation, attempting emergency shift...")
+			a.ensureContextSpace(maxTokens, maxTokens)
+			currentPos = int(a.ctx.Pos())
+			available = ctxSize - currentPos
+			if available <= 0 {
+				a.lastPromptTokens = nil
+				return fmt.Errorf("native: context window full (%d/%d tokens used by prompt), no room for generation", currentPos, ctxSize)
+			}
 		}
 		maxTokens = available
 	}
@@ -989,9 +1029,54 @@ func (a *Adapter) batchSize() int {
 	return 512
 }
 
+// contextShiftThreshold returns the configured shift threshold (0.0-1.0).
+// Default: 0.60 (60% of context size).
+func (a *Adapter) contextShiftThreshold() float64 {
+	if a.cfg.Native.ContextShiftThreshold > 0 {
+		return a.cfg.Native.ContextShiftThreshold
+	}
+	return 0.60 // More proactive than the old 0.75
+}
+
+// contextShiftDiscard returns the number of tokens to discard per shift.
+// Default: 1024 tokens.
+func (a *Adapter) contextShiftDiscard() int {
+	if a.cfg.Native.ContextShiftDiscard > 0 {
+		return a.cfg.Native.ContextShiftDiscard
+	}
+	return 1024
+}
+
+// contextReserveRatio returns the fraction of context to reserve.
+// Default: 0.25 (25% reserved for headroom).
+func (a *Adapter) contextReserveRatio() float64 {
+	if a.cfg.Native.ContextReserveRatio > 0 {
+		return a.cfg.Native.ContextReserveRatio
+	}
+	return 0.25
+}
+
+// autoRecoverFullKV returns whether automatic KV cache recovery is enabled.
+// Default: true.
+func (a *Adapter) autoRecoverFullKV() bool {
+	if a.cfg.Native.AutoRecoverFullKV != nil {
+		return *a.cfg.Native.AutoRecoverFullKV
+	}
+	return true // Default: enabled
+}
+
+// maxShiftAttempts returns the maximum recovery attempts.
+// Default: 3.
+func (a *Adapter) maxShiftAttempts() int {
+	if a.cfg.Native.MaxShiftAttempts > 0 {
+		return a.cfg.Native.MaxShiftAttempts
+	}
+	return 3
+}
+
 // maybeShiftContext checks if the KV cache is at or above the shift threshold
-// (75% of context size). If context shifting is enabled, it discards the
-// oldest 25% of the KV cache and shifts remaining positions down, freeing
+// (default 60% of context size, configurable). If context shifting is enabled,
+// it discards the oldest tokens and shifts remaining positions down, freeing
 // space for continued generation. Returns the number of tokens discarded.
 //
 // After shifting, the prompt cache is invalidated since positions have changed.
@@ -1002,17 +1087,16 @@ func (a *Adapter) maybeShiftContext() int {
 		return 0
 	}
 	ctxSize := a.contextSize()
-	// Lowered threshold from 90% to 75% to provide more headroom for prompts
-	// and prevent context window overflow during multi-turn conversations
-	threshold := int(float64(ctxSize) * 0.75)
+	threshold := int(float64(ctxSize) * a.contextShiftThreshold())
 	currentPos := int(a.ctx.Pos())
 	if currentPos < threshold {
 		return 0
 	}
-	// Discard oldest 25% of the context.
-	nDiscard := int32(float64(ctxSize) * 0.25)
+
+	// Discard tokens based on configuration
+	nDiscard := int32(a.contextShiftDiscard())
 	if nDiscard <= 0 {
-		nDiscard = 1
+		nDiscard = int32(float64(ctxSize) * 0.25) // fallback to 25%
 	}
 	if nDiscard >= a.ctx.Pos() {
 		// Shouldn't happen, but guard against it.
@@ -1031,6 +1115,120 @@ func (a *Adapter) maybeShiftContext() int {
 	log.Printf("native: context shift — discarded %d oldest tokens, pos %d → %d",
 		nDiscard, currentPos, a.ctx.Pos())
 	return int(nDiscard)
+}
+
+// ensureContextSpace proactively shifts context to make room for incoming tokens.
+// This is called BEFORE evaluating tokens to prevent KV cache overflow crashes.
+// Returns true if shifting occurred, false otherwise.
+func (a *Adapter) ensureContextSpace(tokensNeeded int, maxGenerationTokens int) bool {
+	if !a.contextShiftEnabled() {
+		return false
+	}
+
+	ctxSize := a.contextSize()
+	currentPos := int(a.ctx.Pos())
+	reserveRatio := a.contextReserveRatio()
+	reservedSpace := int(float64(ctxSize) * reserveRatio)
+	availableSpace := ctxSize - currentPos - reservedSpace
+
+	// Check if we need to shift to make room
+	if tokensNeeded <= availableSpace {
+		return false // Enough space available
+	}
+
+	// Calculate how many tokens we need to discard
+	tokensNeededWithReserve := tokensNeeded + reservedSpace
+	spaceToFree := tokensNeededWithReserve - (ctxSize - currentPos)
+
+	if spaceToFree <= 0 {
+		return false
+	}
+
+	// Calculate discard amount (at least what we need, but at least 25% of context)
+	nDiscard := int32(spaceToFree)
+	minDiscard := int32(float64(ctxSize) * 0.25)
+	if nDiscard < minDiscard {
+		nDiscard = minDiscard
+	}
+
+	// Don't discard more than we have
+	if nDiscard >= a.ctx.Pos() {
+		nDiscard = a.ctx.Pos() - 1
+		if nDiscard <= 0 {
+			return false
+		}
+	}
+
+	// Perform the shift
+	a.ctx.ShiftKV(nDiscard)
+	a.lastPromptTokens = nil // Invalidate prompt cache
+
+	// Sync draft model
+	if a.draftCtx != nil && a.draftCtx.Pos() >= nDiscard {
+		a.draftCtx.ShiftKV(nDiscard)
+	}
+
+	log.Printf("native: proactive context shift — freed %d tokens for %d incoming, pos %d → %d",
+		nDiscard, tokensNeeded, currentPos, a.ctx.Pos())
+	return true
+}
+
+// evalTokensWithRecovery evaluates tokens with automatic recovery on KV cache full.
+// This handles the rc=1 error by shifting context and retrying.
+func (a *Adapter) evalTokensWithRecovery(tokens []int32, maxTokens int) error {
+	if !a.autoRecoverFullKV() {
+		// Recovery disabled, just evaluate normally
+		return a.evalTokensInChunks(tokens)
+	}
+
+	maxAttempts := a.maxShiftAttempts()
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		// Ensure we have space before attempting evaluation
+		a.ensureContextSpace(len(tokens), maxTokens)
+
+		err := a.evalTokensInChunks(tokens)
+		if err == nil {
+			return nil // Success!
+		}
+
+		// Check if this is a KV cache full error
+		errStr := err.Error()
+		if !strings.Contains(errStr, "KV cache full") {
+			return err // Not a recoverable error
+		}
+
+		// Try to free more space by shifting more aggressively
+		log.Printf("native: KV cache full on attempt %d, attempting recovery shift...", attempt+1)
+
+		currentPos := int(a.ctx.Pos())
+
+		// Shift 50% of remaining context (more aggressive than normal)
+		nDiscard := int32(float64(currentPos) * 0.5)
+		if nDiscard < 512 {
+			nDiscard = 512 // Minimum shift
+		}
+		if nDiscard >= a.ctx.Pos() {
+			nDiscard = a.ctx.Pos() / 2
+		}
+		if nDiscard <= 0 {
+			return err // Can't shift anymore
+		}
+
+		a.ctx.ShiftKV(nDiscard)
+		a.lastPromptTokens = nil
+
+		if a.draftCtx != nil && a.draftCtx.Pos() >= nDiscard {
+			a.draftCtx.ShiftKV(nDiscard)
+		}
+
+		log.Printf("native: recovery shift — discarded %d tokens, pos %d → %d",
+			nDiscard, currentPos, a.ctx.Pos())
+
+		// Retry with the same tokens after shifting
+		continue
+	}
+
+	return fmt.Errorf("native: failed to evaluate after %d recovery attempts: KV cache persistently full", maxAttempts)
 }
 
 // getOrBuildSampler returns a sampler chain for the given options, reusing
@@ -1127,31 +1325,68 @@ type speculativeResult struct {
 // where the last token was evaluated (i.e., the prompt has already been
 // processed on both models).
 func (a *Adapter) speculativeGenerate(sampler *SamplerChain) (speculativeResult, error) {
+	// First, ensure we have space for speculative decoding
+	a.maybeShiftContext()
+
+	// Sync draft model with target if positions differ
+	if a.draftCtx != nil && a.draftCtx.Pos() != a.ctx.Pos() {
+		log.Printf("native: draft model position mismatch (%d vs %d), resyncing...", a.draftCtx.Pos(), a.ctx.Pos())
+		a.draftCtx.ClearKV()
+		// Re-evaluate prompt on draft model - use last prompt tokens if available
+		if len(a.lastPromptTokens) > 0 {
+			if err := a.syncDraftPrompt(a.lastPromptTokens); err != nil {
+				log.Printf("native: draft resync failed, falling back to standard: %v", err)
+				// Fall back to single token generation
+				token, err := a.ctx.SampleToken(sampler)
+				if err != nil {
+					return speculativeResult{}, fmt.Errorf("native: sample fallback: %w", err)
+				}
+				piece := a.model.TokenToPiece(token)
+				return speculativeResult{
+					tokens:   []int32{token},
+					pieces:   []string{piece},
+					hitEOG:   a.model.TokenIsEOG(token),
+					drafted:  0,
+					accepted: 0,
+				}, nil
+			}
+		}
+	}
+
 	// Calculate how many draft tokens we can safely generate
-	// We need: currentPos + n <= batchSize
+	// We need: currentPos + n <= batchSize AND room in context
 	currentPos := int(a.ctx.Pos())
 	batchSize := a.batchSize()
+	ctxSize := a.contextSize()
 
-	// Determine effective speculative N based on available batch capacity
+	// Determine effective speculative N based on available batch capacity and context space
 	n := a.speculativeN
+
+	// Cap by batch size
 	if currentPos+n > batchSize {
-		// Reduce speculative tokens to fit within batch limit
 		n = batchSize - currentPos - 1 // leave 1 token margin for safety
-		if n <= 0 {
-			// No room for speculative decoding, fall back to single token
-			token, err := a.ctx.SampleToken(sampler)
-			if err != nil {
-				return speculativeResult{}, fmt.Errorf("native: sample fallback: %w", err)
-			}
-			piece := a.model.TokenToPiece(token)
-			return speculativeResult{
-				tokens:   []int32{token},
-				pieces:   []string{piece},
-				hitEOG:   a.model.TokenIsEOG(token),
-				drafted:  0,
-				accepted: 0,
-			}, nil
+	}
+
+	// Cap by available context space (with reserve)
+	availableContext := ctxSize - currentPos - int(float64(ctxSize)*a.contextReserveRatio())
+	if n > availableContext {
+		n = availableContext - 1
+	}
+
+	if n <= 0 {
+		// No room for speculative decoding, fall back to single token
+		token, err := a.ctx.SampleToken(sampler)
+		if err != nil {
+			return speculativeResult{}, fmt.Errorf("native: sample fallback: %w", err)
 		}
+		piece := a.model.TokenToPiece(token)
+		return speculativeResult{
+			tokens:   []int32{token},
+			pieces:   []string{piece},
+			hitEOG:   a.model.TokenIsEOG(token),
+			drafted:  0,
+			accepted: 0,
+		}, nil
 	}
 
 	vocabSize := a.model.VocabSize()
@@ -1308,7 +1543,7 @@ func (a *Adapter) speculativeGenerate(sampler *SamplerChain) (speculativeResult,
 // the target model processes the prompt and before speculative generation.
 //
 // This function now handles prompts larger than the draft model's batch size
-// by processing them in chunks.
+// by processing them in chunks. It also handles context shifts gracefully.
 func (a *Adapter) syncDraftPrompt(tokens []int32) error {
 	if a.draftModel == nil || a.draftCtx == nil {
 		return nil
@@ -1321,23 +1556,58 @@ func (a *Adapter) syncDraftPrompt(tokens []int32) error {
 		return nil
 	}
 
+	// Check if prompt is too large for draft model's context
+	// Use the target model's context size as an approximation for draft model
+	targetCtxSize := a.contextSize()
+
+	// If prompt is larger than context, we need to truncate it
+	// Keep system prompt (first ~100 tokens) and recent history (last portion)
+	tokensToEval := tokens
+	if len(tokens) >= targetCtxSize-256 {
+		// Very long prompt - keep system prompt and recent history
+		// This is a simplification; ideally we'd identify the actual system prompt
+		systemPrefix := 100 // Assume first 100 tokens might be system prompt
+		recentHistory := targetCtxSize - 256 - systemPrefix
+
+		truncated := make([]int32, 0, systemPrefix+recentHistory+10)
+		truncated = append(truncated, tokens[:systemPrefix]...)
+		// Add ellipsis marker if model supports it
+		truncated = append(truncated, tokens[len(tokens)-recentHistory:]...)
+		tokensToEval = truncated
+
+		log.Printf("native: truncated draft prompt from %d to %d tokens for context fit",
+			len(tokens), len(tokensToEval))
+	}
+
 	// Process tokens in chunks to respect draft model's batch size
 	draftBatchSize := int32(a.draftBatchSize)
 	if draftBatchSize <= 0 {
 		draftBatchSize = 512
 	}
 
-	for len(tokens) > 0 {
-		chunk := tokens
+	for len(tokensToEval) > 0 {
+		chunk := tokensToEval
 		if int32(len(chunk)) > draftBatchSize {
-			chunk = tokens[:draftBatchSize]
+			chunk = tokensToEval[:draftBatchSize]
 		}
 
 		if err := a.draftCtx.Eval(chunk); err != nil {
-			return fmt.Errorf("native: draft prompt eval chunk of %d tokens: %w", len(chunk), err)
+			// If KV cache full, try clearing and evaluating smaller chunks
+			if strings.Contains(err.Error(), "KV cache full") && len(chunk) > 1 {
+				log.Printf("native: draft model KV full, clearing and retrying with smaller chunks")
+				a.draftCtx.ClearKV()
+				// Retry with single tokens
+				for _, tok := range chunk {
+					if err := a.draftCtx.EvalToken(tok); err != nil {
+						return fmt.Errorf("native: draft single token eval failed: %w", err)
+					}
+				}
+			} else {
+				return fmt.Errorf("native: draft prompt eval chunk of %d tokens: %w", len(chunk), err)
+			}
 		}
 
-		tokens = tokens[len(chunk):]
+		tokensToEval = tokensToEval[len(chunk):]
 	}
 
 	return nil
