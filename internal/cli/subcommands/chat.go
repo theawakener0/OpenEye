@@ -28,15 +28,9 @@ func RunChat(ctx context.Context, cfg config.Config, registry runtime.Registry, 
 	start := time.Now()
 	options := pipeline.Options{}
 	
-	var spinnerDone chan struct{}
 	if opts.Stream {
 		options.Stream = true
 		options.StreamCallback = func(evt runtime.StreamEvent) error {
-			if spinnerDone != nil {
-				close(spinnerDone)
-				spinnerDone = nil
-				fmt.Print("\r\033[K") // Clear spinner line
-			}
 			if evt.Err != nil {
 				return evt.Err
 			}
@@ -48,9 +42,6 @@ func RunChat(ctx context.Context, cfg config.Config, registry runtime.Registry, 
 			os.Stdout.Sync() // Flush immediately
 			return nil
 		}
-	} else {
-		spinnerDone = make(chan struct{})
-		go runCLISpinner(spinnerDone, "Thinking")
 	}
 
 	options.DisableRAG = opts.DisableRAG
@@ -60,11 +51,6 @@ func RunChat(ctx context.Context, cfg config.Config, registry runtime.Registry, 
 	options.MemoryLimit = opts.MemoryLimit
 
 	result, err := pipe.Respond(ctx, message, image, options)
-	
-	if spinnerDone != nil {
-		close(spinnerDone)
-		fmt.Print("\r\033[K") // Clear spinner line
-	}
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "runtime error: %v\n", err)

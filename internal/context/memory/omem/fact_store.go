@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -616,51 +617,101 @@ func (s *FactStore) SemanticSearch(ctx context.Context, queryEmbedding []float32
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Normalize query vector
 	queryVec := normalizeVectorF32(queryEmbedding)
 
-	// Fetch candidates (more than limit for filtering)
+	// CRITICAL FIX: Fetch ALL facts with embeddings (not just recent ones)
+	// Then calculate similarity for ALL and sort by score
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, fact_text, atomic_text, category, importance, embedding, keywords,
 		       timestamp_anchor, location, entities_json, episode_id, turn_id,
 		       created_at, last_accessed, access_count, is_obsolete, superseded_by
 		FROM omem_facts
 		WHERE embedding IS NOT NULL AND is_obsolete = FALSE
-		ORDER BY created_at DESC
-		LIMIT ?
-	`, 100)
+		-- NO ORDER BY - we need to score ALL facts and sort by similarity
+	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query facts: %w", err)
 	}
 	defer rows.Close()
 
-	var results []ScoredFact
+	type scoredRow struct {
+		fact  Fact
+		emb   []float32
+		score float64
+	}
+
+	var scoredRows []scoredRow
+	scanErrors := 0
+	emptyEmbeddings := 0
+
 	for rows.Next() {
-		fact, err := s.scanFactFromRows(rows)
+		var sr scoredRow
+		var embBytes []byte
+		var entitiesJSON sql.NullString
+		var keywordsStr sql.NullString
+
+		// FIX: Scan all text columns as strings first, then convert
+		err := rows.Scan(
+			&sr.fact.ID, &sr.fact.Text, &sr.fact.AtomicText, &sr.fact.Category,
+			&sr.fact.Importance, &embBytes, &keywordsStr,
+			&sr.fact.TimestampAnchor, &sr.fact.Location, &entitiesJSON,
+			&sr.fact.EpisodeID, &sr.fact.TurnID, &sr.fact.CreatedAt,
+			&sr.fact.LastAccessed, &sr.fact.AccessCount, &sr.fact.IsObsolete,
+			&sr.fact.SupersededBy,
+		)
 		if err != nil {
+			scanErrors++
+			fmt.Printf("SemanticSearch: scan error on row %d: %v\n", scanErrors, err)
 			continue
 		}
 
-		if len(fact.Embedding) > 0 {
-			score := cosineSimilarityOptimized(queryVec, fact.Embedding)
-			results = append(results, ScoredFact{
-				Fact:          *fact,
-				SemanticScore: score,
-				Score:         score,
-			})
+		// Parse keywords (space-separated in DB)
+		if keywordsStr.Valid && keywordsStr.String != "" {
+			sr.fact.Keywords = strings.Fields(keywordsStr.String)
 		}
-	}
 
-	// Sort by score descending
-	for i := 0; i < len(results)-1; i++ {
-		for j := i + 1; j < len(results); j++ {
-			if results[j].Score > results[i].Score {
-				results[i], results[j] = results[j], results[i]
+		// Parse entities JSON
+		if entitiesJSON.Valid && entitiesJSON.String != "" {
+			json.Unmarshal([]byte(entitiesJSON.String), &sr.fact.Entities)
+		}
+
+		if len(embBytes) > 0 {
+			sr.emb = bytesToFloat32Slice(embBytes)
+			if len(sr.emb) > 0 {
+				// Calculate semantic similarity
+				sr.score = cosineSimilarityOptimized(queryVec, sr.emb)
+				scoredRows = append(scoredRows, sr)
+			} else {
+				emptyEmbeddings++
 			}
+		} else {
+			emptyEmbeddings++
 		}
 	}
 
-	// Limit results
+	if scanErrors > 0 {
+		fmt.Printf("SemanticSearch: %d rows skipped due to scan errors\n", scanErrors)
+	}
+	if emptyEmbeddings > 0 {
+		fmt.Printf("SemanticSearch: %d rows skipped due to empty embeddings\n", emptyEmbeddings)
+	}
+
+	// Convert to results
+	results := make([]ScoredFact, 0, len(scoredRows))
+	for _, sr := range scoredRows {
+		results = append(results, ScoredFact{
+			Fact:          sr.fact,
+			SemanticScore: sr.score,
+			Score:         sr.score,
+		})
+	}
+
+	// Sort by semantic similarity (highest first)
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	// Return top N results
 	if len(results) > limit {
 		results = results[:limit]
 	}
@@ -1574,33 +1625,34 @@ func cosineSimilarityOptimized(queryNormalized, doc []float32) float64 {
 		return 0
 	}
 
-	var dot, normSq float64
+	// Normalize the doc vector first
+	docNormalized := normalizeVectorF32(doc)
+
+	var dot float64
 	n := len(queryNormalized)
 
 	// Process 4 elements at a time
 	i := 0
 	for ; i <= n-4; i += 4 {
-		dot += float64(queryNormalized[i])*float64(doc[i]) +
-			float64(queryNormalized[i+1])*float64(doc[i+1]) +
-			float64(queryNormalized[i+2])*float64(doc[i+2]) +
-			float64(queryNormalized[i+3])*float64(doc[i+3])
-
-		normSq += float64(doc[i])*float64(doc[i]) +
-			float64(doc[i+1])*float64(doc[i+1]) +
-			float64(doc[i+2])*float64(doc[i+2]) +
-			float64(doc[i+3])*float64(doc[i+3])
+		dot += float64(queryNormalized[i])*float64(docNormalized[i]) +
+			float64(queryNormalized[i+1])*float64(docNormalized[i+1]) +
+			float64(queryNormalized[i+2])*float64(docNormalized[i+2]) +
+			float64(queryNormalized[i+3])*float64(docNormalized[i+3])
 	}
 
 	for ; i < n; i++ {
-		dot += float64(queryNormalized[i]) * float64(doc[i])
-		normSq += float64(doc[i]) * float64(doc[i])
+		dot += float64(queryNormalized[i]) * float64(docNormalized[i])
 	}
 
-	if normSq == 0 {
+	// Both vectors are now normalized, so dot product = cosine similarity
+	// Clamp to [0, 1] range for semantic similarity (negative values become 0)
+	if dot < 0 {
 		return 0
 	}
-
-	return dot / math.Sqrt(normSq)
+	if dot > 1 {
+		return 1
+	}
+	return dot
 }
 
 // Int list helpers

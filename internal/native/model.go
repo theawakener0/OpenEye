@@ -154,6 +154,16 @@ func (m *Model) TokenEOS() int32 {
 	return cTokenEOS(m.handle)
 }
 
+// VocabSize returns the number of tokens in the model's vocabulary.
+func (m *Model) VocabSize() int32 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.closed {
+		return 0
+	}
+	return cVocabNTokens(m.handle)
+}
+
 // Close frees the model and all associated resources.
 func (m *Model) Close() error {
 	m.mu.Lock()

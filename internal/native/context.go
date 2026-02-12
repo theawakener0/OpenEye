@@ -46,6 +46,12 @@ type ContextOptions struct {
 
 	// FlashAttn controls flash attention: -1=auto, 0=disabled, 1=enabled.
 	FlashAttn int32
+
+	// TypeK controls KV cache key quantization: 0=f16, 1=q8_0, 2=q4_0.
+	TypeK int32
+
+	// TypeV controls KV cache value quantization: 0=f16, 1=q8_0, 2=q4_0.
+	TypeV int32
 }
 
 // DefaultContextOptions returns sensible defaults for edge inference.
@@ -65,7 +71,8 @@ func NewContext(model *Model, opts ContextOptions) (*Context, error) {
 	}
 
 	handle := cContextNew(model.handle, opts.NCtx, opts.NBatch,
-		opts.NThreads, opts.NThreadsBatch, opts.Embeddings, opts.FlashAttn)
+		opts.NThreads, opts.NThreadsBatch, opts.Embeddings, opts.FlashAttn,
+		opts.TypeK, opts.TypeV)
 	if handle == nil {
 		return nil, fmt.Errorf("native: failed to create context")
 	}
@@ -195,6 +202,28 @@ func (c *Context) TruncateKV(p0 int32) {
 	}
 	cMemorySeqRm(c.handle, 0, p0, -1)
 	c.pos = p0
+}
+
+// ShiftKV implements context window sliding. It removes the oldest nDiscard
+// tokens from the KV cache and shifts the remaining positions down by
+// nDiscard, keeping them contiguous. The position counter is updated
+// accordingly. This enables infinite-length conversations by recycling
+// context space instead of failing when the window fills up.
+//
+// The caller must ensure nDiscard < c.pos. Typically called when the
+// context reaches ~90% capacity, discarding ~25% of the oldest entries.
+func (c *Context) ShiftKV(nDiscard int32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || nDiscard <= 0 || nDiscard >= c.pos {
+		return
+	}
+	// 1. Remove tokens in positions [0, nDiscard) for sequence 0.
+	cMemorySeqRm(c.handle, 0, 0, nDiscard)
+	// 2. Shift remaining positions [nDiscard, inf) down by nDiscard.
+	cMemorySeqAdd(c.handle, 0, nDiscard, -1, -nDiscard)
+	// 3. Update position counter.
+	c.pos -= nDiscard
 }
 
 // SetThreads updates the thread counts for generation and batch processing.
@@ -330,6 +359,44 @@ func (c *Context) SetPos(pos int32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.pos = pos
+}
+
+// EvalLogitsAll processes a batch of tokens like Eval, but computes logits
+// for ALL tokens in the batch (not just the last). This is needed for
+// speculative decoding verification where the target model must check each
+// draft token's logits individually.
+func (c *Context) EvalLogitsAll(tokens []int32) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return fmt.Errorf("native: context is closed")
+	}
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	rc := cDecodeBatchLogitsAll(c.handle, tokens, c.pos)
+	if rc != 0 {
+		if rc == 1 {
+			return fmt.Errorf("native: KV cache full during speculative verify")
+		}
+		return fmt.Errorf("native: decode logits-all failed with code %d", rc)
+	}
+
+	c.pos += int32(len(tokens))
+	return nil
+}
+
+// GetLogitsAt returns the logits for the token at the given batch output
+// index. The vocabSize must match the model's vocabulary size.
+// The returned slice is context-owned and valid until the next decode call.
+func (c *Context) GetLogitsAt(idx int32, vocabSize int32) []float32 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil
+	}
+	return cGetLogits(c.handle, idx, vocabSize)
 }
 
 // Close frees the context. The parent Model must outlive this Context.

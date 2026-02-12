@@ -297,6 +297,44 @@ By encapsulating all internal modules behind a single, unified pipeline, the fra
 (1) predictable, high-performance operation for every SLM, and
 (2) a simple, developer-friendly interface that abstracts away complexity without sacrificing control.
 
+### Native Inference Engine
+
+OpenEye implements a custom native inference layer using Go-based llama.cpp CGo bindings, eliminating HTTP/REST overhead present in client-server architectures. This zero-copy approach enables direct memory management and hardware-aware execution optimized for ARM edge devices.
+
+**Key Components:**
+- **Direct Model Loading**: Load GGUF models directly without serialization overhead, enabling sub-millisecond initialization
+- **Hardware-Aware Threading**: Configurable thread pools for inference and batch processing, with automatic CPU core detection
+- **ARM NEON Optimization**: Vector operation paths optimized for Raspberry Pi and ARM edge devices
+- **Multi-Modal Support**: Vision model support via mmproj files for integrated camera processing
+- **Prompt Caching**: Stores last prompt's token sequence to reuse KV cache prefix, dramatically reducing time-to-first-token (TTFT) on edge devices by eliminating redundant prompt re-evaluation
+- **Sampler Reuse**: Avoids per-request allocation of CGo sampler chains; chains are rebuilt only when sampling parameters change between requests
+
+The native adapter implements the same `runtime.Adapter` interface as the HTTP backend, allowing seamless switching between local native inference and remote server-based inference via configuration changes.
+
+### Inference Optimization Stack
+
+Our optimization approach draws inspiration from Dynamic Memory Compression (NVIDIA, 2024), which demonstrated that adaptive memory reduction can significantly improve inference efficiency without sacrificing model quality. While DMC operates at the model architecture level—training models to adaptively compress KV cache through learned accumulation decisions—we apply similar principles at the inference runtime level through configurable quantization and caching strategies. This runtime-level approach is essential for edge deployment where users cannot modify or retrain model architectures.
+
+**The Eight Optimization Techniques:**
+
+1. **KV Cache Quantization** (DMC-inspired): Configurable precision levels (f16, q8_0, q4_0) for KV cache storage. At q4_0, achieves approximately 75% KV memory reduction while maintaining acceptable quality for edge deployment. This directly applies DMC's memory efficiency principles without requiring model retraining.
+
+2. **Speculative Decoding**: A smaller "draft" model (e.g., Gemma-3-270M, 270M parameters) generates candidate tokens that the target model (e.g., LFM2.5-1.2B, 1.2B parameters) verifies in batch. When verification passes, multiple tokens are accepted per decode step, yielding 1.5-2.5x throughput improvement on CPU-bound edge devices.
+
+3. **Flash Attention**: Memory-efficient attention computation that reduces memory pressure during long-context inference, enabling larger effective context windows within the same memory budget.
+
+4. **Prompt Caching**: Reuses KV cache prefix across requests with identical system prompts and conversation history, eliminating redundant computation and reducing TTFT for subsequent turns in a conversation.
+
+5. **Context Shifting**: Automatic sliding window mechanism that discards the oldest context when KV cache fills, enabling unbounded conversation length without generation failure or context overflow errors.
+
+6. **Greedy Fast-Path**: Temperature=0.2 triggers an optimized sampling path with reduced computational overhead for deterministic generation scenarios, improving throughput for factual queries.
+
+7. **Stream Chunking**: Configurable token buffering (default: 3 tokens) before emitting to stream callback, enabling smoother word-level streaming rather than character-by-character output, improving perceived responsiveness.
+
+8. **Parallel Context Assembly**: Four concurrent goroutines handle context building operations (summarization, vector search, RAG retrieval, Omem context assembly), hiding I/O latency behind computation and reducing overall request latency.
+
+These optimizations can be selectively enabled or disabled via configuration, allowing users to tune the performance-quality trade-off for their specific hardware constraints and use cases.
+
 ### OpenEye Smart Glasses – Hardware Architecture & Modular Design
 
 The hardware architecture of the OpenEye smart glasses is built around a core principle that aligns with the OpenEye framework itself: pluggability and extensibility at every layer. Just as the software framework exposes pluggable modules, hardware must remain modular, replaceable, and upgradable without requiring a redesign of the entire system. This approach enables incremental improvement, supports experimentation with different compute modules, and ensures long-term sustainability of the platform.
@@ -531,7 +569,7 @@ Facts with importance below the threshold (default: 0.3) are discarded. This pre
 
 ### Pillar 2: Multi-View Indexing — Beyond Semantic Similarity
 
-Our experiments revealed that vector similarity alone achieves only ~60% recall. The query "What is my favorite color?" often retrieves facts about "visual preferences" or "aesthetics" rather than the exact answer. Multi-view indexing addresses this through three simultaneous retrieval paths:
+Our experiments revealed that vector similarity alone achieves 68% recall. The query "What is my favorite color?" often retrieves facts about "visual preferences" or "aesthetics" rather than the exact answer. Multi-view indexing addresses this through three simultaneous retrieval paths:
 
 **Semantic View (Weight: 0.5)**
 - Dense vector embeddings using MiniLM-L6-v2 (22MB, 384 dimensions)

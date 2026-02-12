@@ -52,6 +52,19 @@ type Stats struct {
 
 	// GenerationTPS is the token generation throughput (tokens/second).
 	GenerationTPS float64
+
+	// SpeculativeAttempted is the total number of draft tokens proposed
+	// across all speculative decoding rounds (0 if speculative is off).
+	SpeculativeAttempted int
+
+	// SpeculativeAccepted is how many draft tokens matched the target
+	// model's predictions and were accepted without re-generation.
+	SpeculativeAccepted int
+
+	// SpeculativeAcceptanceRate is Accepted/Attempted as a percentage.
+	// Higher is better — 100% means the draft model perfectly predicted
+	// the target model's output.
+	SpeculativeAcceptanceRate float64
 }
 
 // StreamEvent is emitted for each token or checkpoint during streaming.

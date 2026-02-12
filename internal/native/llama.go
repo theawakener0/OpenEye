@@ -121,10 +121,12 @@ func cModelGetInfo(m C.oe_model_t) ModelInfo {
 
 // cContextNew creates an inference context.
 func cContextNew(m C.oe_model_t, nCtx, nBatch uint32,
-	nThreads, nThreadsBatch int32, embeddings bool, flashAttn int32) C.oe_context_t {
+	nThreads, nThreadsBatch int32, embeddings bool, flashAttn int32,
+	typeK, typeV int32) C.oe_context_t {
 	return C.oe_context_new(m, C.uint32_t(nCtx), C.uint32_t(nBatch),
 		C.int32_t(nThreads), C.int32_t(nThreadsBatch),
-		C.bool(embeddings), C.int32_t(flashAttn))
+		C.bool(embeddings), C.int32_t(flashAttn),
+		C.int32_t(typeK), C.int32_t(typeV))
 }
 
 // cContextFree frees an inference context.
@@ -185,6 +187,11 @@ func cTokenBOS(m C.oe_model_t) int32 {
 // cTokenEOS returns the end-of-sentence token ID.
 func cTokenEOS(m C.oe_model_t) int32 {
 	return int32(C.oe_token_eos(m))
+}
+
+// cVocabNTokens returns the total number of tokens in the model's vocabulary.
+func cVocabNTokens(m C.oe_model_t) int32 {
+	return int32(C.oe_vocab_n_tokens(m))
 }
 
 // ---------------------------------------------------------------------------
@@ -289,6 +296,43 @@ func cMemorySeqRm(ctx C.oe_context_t, seqID, p0, p1 int32) bool {
 // cMemorySeqPosMax returns the max position for a sequence, or -1 if empty.
 func cMemorySeqPosMax(ctx C.oe_context_t, seqID int32) int32 {
 	return int32(C.oe_memory_seq_pos_max(ctx, C.int32_t(seqID)))
+}
+
+// cMemorySeqAdd shifts KV cache positions in [p0, p1) for seqID by delta.
+// Used for context window sliding: after removing old tokens, shift the
+// remaining positions down to keep them contiguous.
+func cMemorySeqAdd(ctx C.oe_context_t, seqID, p0, p1, delta int32) {
+	C.oe_memory_seq_add(ctx, C.int32_t(seqID),
+		C.int32_t(p0), C.int32_t(p1), C.int32_t(delta))
+}
+
+// ---------------------------------------------------------------------------
+// Speculative decoding — low-level C wrappers
+// ---------------------------------------------------------------------------
+
+// cDecodeBatchLogitsAll evaluates tokens with logits computed for ALL tokens.
+// This is used for speculative decoding verification where the target model
+// needs to check each draft token against its own distribution.
+func cDecodeBatchLogitsAll(ctx C.oe_context_t, tokens []int32, posStart int32) int32 {
+	if len(tokens) == 0 {
+		return 0
+	}
+	rc := int32(C.oe_decode_batch_logits_all(ctx,
+		(*C.int32_t)(unsafe.Pointer(&tokens[0])),
+		C.int32_t(len(tokens)), C.int32_t(posStart)))
+	runtime.KeepAlive(tokens)
+	return rc
+}
+
+// cGetLogits returns the logits for the token at output index idx.
+// Returns nil if idx is invalid. The returned pointer is context-owned
+// and valid until the next decode call.
+func cGetLogits(ctx C.oe_context_t, idx int32, vocabSize int32) []float32 {
+	ptr := C.oe_get_logits(ctx, C.int32_t(idx))
+	if ptr == nil {
+		return nil
+	}
+	return unsafe.Slice((*float32)(unsafe.Pointer(ptr)), vocabSize)
 }
 
 // ---------------------------------------------------------------------------

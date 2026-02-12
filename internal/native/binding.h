@@ -81,9 +81,12 @@ oe_model_info_t oe_model_get_info(oe_model_t model);
 // n_threads_batch: threads for batch processing (0 = same as n_threads)
 // embeddings:   enable embedding extraction
 // flash_attn:   enable flash attention (-1=auto, 0=off, 1=on)
+// type_k:       KV cache key type (0=f16, 1=q8_0, 2=q4_0)
+// type_v:       KV cache value type (0=f16, 1=q8_0, 2=q4_0)
 oe_context_t oe_context_new(oe_model_t model, uint32_t n_ctx, uint32_t n_batch,
                              int32_t n_threads, int32_t n_threads_batch,
-                             bool embeddings, int32_t flash_attn);
+                             bool embeddings, int32_t flash_attn,
+                             int32_t type_k, int32_t type_v);
 
 // Free an inference context.
 void oe_context_free(oe_context_t ctx);
@@ -110,6 +113,9 @@ bool oe_token_is_eog(oe_model_t model, int32_t token);
 // Get special token IDs.
 int32_t oe_token_bos(oe_model_t model);
 int32_t oe_token_eos(oe_model_t model);
+
+// Get the vocabulary size (number of tokens in the model's vocabulary).
+int32_t oe_vocab_n_tokens(oe_model_t model);
 
 // ---------------------------------------------------------------------------
 // Decode / Evaluate
@@ -162,6 +168,24 @@ bool oe_memory_seq_rm(oe_context_t ctx, int32_t seq_id,
 // Get the maximum position present in the KV cache for the given sequence.
 // Returns -1 if the sequence is empty.
 int32_t oe_memory_seq_pos_max(oe_context_t ctx, int32_t seq_id);
+
+// Shift positions in the KV cache for a sequence by delta.
+// All positions in [p0, p1) for seq_id are shifted by delta.
+// Used for context window sliding: after removing old tokens,
+// shift remaining positions down to keep them contiguous.
+void oe_memory_seq_add(oe_context_t ctx, int32_t seq_id,
+                       int32_t p0, int32_t p1, int32_t delta);
+
+// ---------------------------------------------------------------------------
+// Speculative decoding
+// ---------------------------------------------------------------------------
+
+// Evaluate a batch of tokens with logits computed for ALL tokens (not just
+// the last one). This is needed for speculative decoding verification: the
+// target model evaluates N draft tokens and checks each one against its own
+// distribution. Returns 0 on success, 1 if KV cache full, negative on error.
+int32_t oe_decode_batch_logits_all(oe_context_t ctx, int32_t *tokens,
+                                    int32_t n_tokens, int32_t pos_start);
 
 // ---------------------------------------------------------------------------
 // Sampler chain

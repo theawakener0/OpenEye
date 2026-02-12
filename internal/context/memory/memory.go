@@ -4,11 +4,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
-	_ "modernc.org/sqlite"
 )
 
 // Entry represents a single conversational turn persisted in the store.
@@ -48,7 +49,7 @@ func NewStore(path string) (*Store, error) {
 		return nil, err
 	}
 
-	insertStmt, err := db.Prepare(`INSERT INTO interactions (role, content, created_at) VALUES (?, ?, ?)`) 
+	insertStmt, err := db.Prepare(`INSERT INTO interactions (role, content, created_at) VALUES (?, ?, ?)`)
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to prepare insert statement: %w", err)
@@ -139,7 +140,7 @@ func (s *Store) Recent(limit int) ([]Entry, error) {
 	entries := make([]Entry, 0, limit)
 	for rows.Next() {
 		var (
-			role   string
+			role    string
 			content string
 			ts      int64
 		)
@@ -154,6 +155,114 @@ func (s *Store) Recent(limit int) ([]Entry, error) {
 	}
 
 	return entries, nil
+}
+
+// Search performs a text search on the stored content using LIKE pattern matching.
+// It extracts key search terms from the query to improve recall.
+func (s *Store) Search(query string, limit int) ([]Entry, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("memory store is not initialized")
+	}
+	if limit <= 0 {
+		return nil, errors.New("limit must be greater than zero")
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Extract key terms from query
+	searchTerms := extractSearchTerms(query)
+
+	// Build OR query for all extracted terms
+	if len(searchTerms) == 0 {
+		return nil, nil
+	}
+
+	queryBuilder := `SELECT role, content, created_at FROM interactions WHERE `
+	conditions := make([]string, len(searchTerms))
+	args := make([]interface{}, len(searchTerms))
+
+	for i, term := range searchTerms {
+		conditions[i] = "content LIKE ?"
+		args[i] = "%" + term + "%"
+	}
+	queryBuilder += strings.Join(conditions, " OR ")
+	queryBuilder += " ORDER BY created_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.Query(queryBuilder, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search memory: %w", err)
+	}
+	defer rows.Close()
+
+	entries := make([]Entry, 0, limit)
+	for rows.Next() {
+		var (
+			role    string
+			content string
+			ts      int64
+		)
+		if err := rows.Scan(&role, &content, &ts); err != nil {
+			return nil, fmt.Errorf("failed to scan memory row: %w", err)
+		}
+		entries = append(entries, Entry{Role: role, Content: content, CreatedAt: time.Unix(ts, 0)})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating memory rows: %w", err)
+	}
+
+	return entries, nil
+}
+
+// extractSearchTerms extracts key terms from a query for searching
+func extractSearchTerms(query string) []string {
+	query = strings.ToLower(query)
+
+	// Remove common question words and noise
+	stopWords := []string{
+		"what", "is", "are", "do", "does", "did", "when", "where", "who", "how",
+		"my", "the", "a", "an", "can", "could", "would", "should", "will", "you",
+		"i", "me", "your", "yours", "tell", "me", "about", "remember",
+	}
+
+	// Tokenize
+	words := make([]string, 0)
+	current := ""
+	for _, c := range query {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			current += string(c)
+		} else {
+			if current != "" {
+				words = append(words, current)
+				current = ""
+			}
+		}
+	}
+	if current != "" {
+		words = append(words, current)
+	}
+
+	// Filter stop words and short words
+	terms := make([]string, 0)
+	for _, w := range words {
+		if len(w) <= 2 {
+			continue
+		}
+		isStop := false
+		for _, sw := range stopWords {
+			if w == sw {
+				isStop = true
+				break
+			}
+		}
+		if !isStop {
+			terms = append(terms, w)
+		}
+	}
+
+	return terms
 }
 
 // Close releases database resources held by the store.
@@ -188,10 +297,3 @@ func (s *Store) Close() error {
 
 	return firstErr
 }
-
-
-
-
-
-
-

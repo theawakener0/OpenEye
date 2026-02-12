@@ -8,7 +8,15 @@ runtime:
     # mmproj_path: "models/your-model-mmproj.gguf"  # Vision projector for multimodal (optional)
     context_size: 2048
     threads: 4
+    batch_size: 2048                                 # Maximum batch size for prompt processing (increased for long prompts)
+    # threads_batch: 4                                # Threads for batch processing (defaults to threads)
     warmup: true
+    # --- Inference Optimizations ---
+    kv_cache_type: "q4_0"                            # KV cache quantization: f16, q8_0, q4_0
+    stream_chunk_size: 3                            # Tokens to buffer before streaming (1=disabled)
+    context_shift: true                             # Auto-shift KV cache when context fills (90% threshold)
+    # draft_model_path: "models/SmolLM2-135M-Instruct-Q4_K_M.gguf"  # DISABLED: Causes sync issues with context clearing
+    # speculative_n: 5
   http:
     base_url: "http://127.0.0.1:42069"
     timeout: "0"
@@ -28,7 +36,7 @@ memory:
   
   # Vector Memory Engine (DuckDB-backed) - LEGACY
   # Enables semantic search and long-term memory for SLMs
-  vector_enabled: true
+  vector_enabled: false
   vector_db_path: "openeye_vector.duckdb"
   embedding_dim: 384                    # Embedding dimension (384 for small models, 768 for larger)
   
@@ -128,7 +136,7 @@ memory:
   # - Episode/session management for cross-conversation continuity
   # ============================================================================
   omem:
-    enabled: true
+    enabled: false
     
     # Storage settings (DuckDB-backed)
     storage:

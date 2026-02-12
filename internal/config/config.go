@@ -58,6 +58,35 @@ type NativeBackendConfig struct {
 	FlashAttention *bool  `yaml:"flash_attention"`
 	Warmup         bool   `yaml:"warmup"`
 	WarmupTokens   int    `yaml:"warmup_tokens"` // 0=single BOS token, >0=multi-token warmup
+
+	// --- Inference optimizations ---
+
+	// DraftModelPath is the path to a smaller GGUF model for speculative
+	// decoding. When set, the draft model generates candidate tokens that
+	// the target model verifies in batch, yielding 1.5-2.5x generation
+	// speedup on CPU. Use a model from the same family but much smaller
+	// (e.g., SmolLM2-135M-Q4_K_M.gguf as draft for a 1.2B target).
+	DraftModelPath string `yaml:"draft_model_path"`
+
+	// SpeculativeN is the number of draft tokens to generate before
+	// verification. Higher values amortize more overhead but risk more
+	// rejections. Default: 5. Range: 2-8.
+	SpeculativeN int `yaml:"speculative_n"`
+
+	// KVCacheType controls quantization of the KV cache. Lower precision
+	// reduces memory usage (allowing larger context or more headroom)
+	// with minimal quality impact. Options: "f16" (default), "q8_0", "q4_0".
+	KVCacheType string `yaml:"kv_cache_type"`
+
+	// StreamChunkSize controls how many tokens are buffered before
+	// emitting to the stream callback. Higher values produce smoother
+	// word-level streaming. 0 or 1 = emit every token. Default: 3.
+	StreamChunkSize int `yaml:"stream_chunk_size"`
+
+	// ContextShift enables automatic sliding window when the KV cache
+	// fills up. Instead of failing, the oldest portion of the context
+	// is discarded and generation continues. Default: true.
+	ContextShift *bool `yaml:"context_shift"`
 }
 
 // HTTPBackendConfig configures the default HTTP completion backend.
@@ -707,6 +736,21 @@ func merge(base, override Config) Config {
 	}
 	if override.Runtime.Native.WarmupTokens != 0 {
 		result.Runtime.Native.WarmupTokens = override.Runtime.Native.WarmupTokens
+	}
+	if override.Runtime.Native.DraftModelPath != "" {
+		result.Runtime.Native.DraftModelPath = override.Runtime.Native.DraftModelPath
+	}
+	if override.Runtime.Native.SpeculativeN != 0 {
+		result.Runtime.Native.SpeculativeN = override.Runtime.Native.SpeculativeN
+	}
+	if override.Runtime.Native.KVCacheType != "" {
+		result.Runtime.Native.KVCacheType = override.Runtime.Native.KVCacheType
+	}
+	if override.Runtime.Native.StreamChunkSize != 0 {
+		result.Runtime.Native.StreamChunkSize = override.Runtime.Native.StreamChunkSize
+	}
+	if override.Runtime.Native.ContextShift != nil {
+		result.Runtime.Native.ContextShift = override.Runtime.Native.ContextShift
 	}
 
 	d := override.Runtime.Defaults

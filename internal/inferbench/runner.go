@@ -35,6 +35,11 @@ type Config struct {
 
 	// Verbose enables per-iteration logging.
 	Verbose bool
+
+	// UseStream benchmarks Stream() instead of Generate().
+	// When true, runOnce uses the streaming interface and captures
+	// inter-chunk latency and chunk count.
+	UseStream bool
 }
 
 // DefaultConfig returns reasonable defaults for edge benchmarking.
@@ -90,6 +95,16 @@ type IterationResult struct {
 	GenerationTPS   float64       `json:"generation_tps"`
 	RSSBytes        int64         `json:"rss_bytes"`
 	Error           string        `json:"error,omitempty"`
+
+	// Speculative decoding metrics (zero when speculative is off).
+	SpecDrafted        int     `json:"spec_drafted,omitempty"`
+	SpecAccepted       int     `json:"spec_accepted,omitempty"`
+	SpecAcceptanceRate float64 `json:"spec_acceptance_rate,omitempty"`
+
+	// Streaming metrics (zero when using Generate mode).
+	ChunkCount      int           `json:"chunk_count,omitempty"`
+	AvgChunkLatency time.Duration `json:"avg_chunk_latency_ns,omitempty"`
+	MaxChunkLatency time.Duration `json:"max_chunk_latency_ns,omitempty"`
 }
 
 // PromptSummary aggregates results across iterations for a single prompt.
@@ -105,6 +120,18 @@ type PromptSummary struct {
 	CacheHitImprove float64       `json:"cache_hit_ttft_improvement_pct,omitempty"` // for Repeat prompts
 	PeakRSSBytes    int64         `json:"peak_rss_bytes"`
 	Errors          int           `json:"errors"`
+
+	// Speculative decoding aggregates (omitted from JSON when zero).
+	SpecAcceptanceRate FloatStats `json:"spec_acceptance_rate,omitempty"`
+	AvgSpecDrafted     float64    `json:"avg_spec_drafted,omitempty"`
+	AvgSpecAccepted    float64    `json:"avg_spec_accepted,omitempty"`
+	SpeculativeActive  bool       `json:"speculative_active,omitempty"`
+
+	// Streaming aggregates (omitted when using Generate mode).
+	AvgChunkLatency DurationStats `json:"avg_chunk_latency,omitempty"`
+	MaxChunkLatency DurationStats `json:"max_chunk_latency,omitempty"`
+	AvgChunkCount   float64       `json:"avg_chunk_count,omitempty"`
+	StreamMode      bool          `json:"stream_mode,omitempty"`
 }
 
 // DurationStats summarises a collection of time.Duration values.
@@ -237,6 +264,10 @@ func (r *Runner) benchmarkPrompt(ctx context.Context, prompt Prompt) ([]Iteratio
 
 // runOnce executes a single Generate call and captures metrics.
 func (r *Runner) runOnce(ctx context.Context, prompt Prompt, iteration int) (IterationResult, error) {
+	if r.cfg.UseStream {
+		return r.runOnceStream(ctx, prompt, iteration)
+	}
+
 	rss := readRSS()
 
 	req := runtime.Request{
@@ -264,14 +295,117 @@ func (r *Runner) runOnce(ctx context.Context, prompt Prompt, iteration int) (Ite
 	result.TokensCached = resp.Stats.TokensCached
 	result.PromptTPS = resp.Stats.PromptTPS
 	result.GenerationTPS = resp.Stats.GenerationTPS
+	result.SpecDrafted = resp.Stats.SpeculativeAttempted
+	result.SpecAccepted = resp.Stats.SpeculativeAccepted
+	result.SpecAcceptanceRate = resp.Stats.SpeculativeAcceptanceRate
 	result.RSSBytes = readRSS()
 
 	if r.cfg.Verbose {
-		fmt.Printf("    TTFT=%v  gen=%d tok @ %.1f tok/s  cached=%d\n",
+		specInfo := ""
+		if result.SpecDrafted > 0 {
+			specInfo = fmt.Sprintf("  spec=%d/%d (%.0f%%)", result.SpecAccepted, result.SpecDrafted, result.SpecAcceptanceRate)
+		}
+		fmt.Printf("    TTFT=%v  gen=%d tok @ %.1f tok/s  cached=%d%s\n",
 			result.TTFT.Round(time.Millisecond),
 			result.TokensGenerated,
 			result.GenerationTPS,
-			result.TokensCached)
+			result.TokensCached,
+			specInfo)
+	}
+
+	return result, nil
+}
+
+// runOnceStream executes a single Stream call and captures metrics including
+// inter-chunk latency.
+func (r *Runner) runOnceStream(ctx context.Context, prompt Prompt, iteration int) (IterationResult, error) {
+	rss := readRSS()
+
+	req := runtime.Request{
+		Prompt: prompt.Text,
+		Options: runtime.GenerationOptions{
+			MaxTokens: r.cfg.MaxTokens,
+		},
+	}
+
+	result := IterationResult{
+		PromptName: prompt.Name,
+		Iteration:  iteration,
+		RSSBytes:   rss,
+	}
+
+	var chunkCount int
+	var maxChunkLatency time.Duration
+	var totalChunkLatency time.Duration
+	var lastChunkTime time.Time
+	startTime := time.Now()
+
+	err := r.adapter.Stream(ctx, req, func(ev runtime.StreamEvent) error {
+		now := time.Now()
+
+		if ev.Err != nil {
+			return ev.Err
+		}
+
+		if ev.Final {
+			// Capture final stats from the streaming event.
+			if ev.Stats != nil {
+				result.TTFT = ev.Stats.TTFT
+				result.Duration = ev.Stats.Duration
+				result.TokensEvaluated = ev.Stats.TokensEvaluated
+				result.TokensGenerated = ev.Stats.TokensGenerated
+				result.TokensCached = ev.Stats.TokensCached
+				result.PromptTPS = ev.Stats.PromptTPS
+				result.GenerationTPS = ev.Stats.GenerationTPS
+				result.SpecDrafted = ev.Stats.SpeculativeAttempted
+				result.SpecAccepted = ev.Stats.SpeculativeAccepted
+				result.SpecAcceptanceRate = ev.Stats.SpeculativeAcceptanceRate
+			}
+			return nil
+		}
+
+		// Non-final event: track chunk latency.
+		chunkCount++
+		if !lastChunkTime.IsZero() {
+			latency := now.Sub(lastChunkTime)
+			totalChunkLatency += latency
+			if latency > maxChunkLatency {
+				maxChunkLatency = latency
+			}
+		}
+		lastChunkTime = now
+		return nil
+	})
+
+	if err != nil {
+		result.Error = err.Error()
+		return result, err
+	}
+
+	// If Duration wasn't set by final stats, compute it.
+	if result.Duration == 0 {
+		result.Duration = time.Since(startTime)
+	}
+
+	result.ChunkCount = chunkCount
+	result.MaxChunkLatency = maxChunkLatency
+	if chunkCount > 1 {
+		result.AvgChunkLatency = totalChunkLatency / time.Duration(chunkCount-1)
+	}
+	result.RSSBytes = readRSS()
+
+	if r.cfg.Verbose {
+		specInfo := ""
+		if result.SpecDrafted > 0 {
+			specInfo = fmt.Sprintf("  spec=%d/%d (%.0f%%)", result.SpecAccepted, result.SpecDrafted, result.SpecAcceptanceRate)
+		}
+		fmt.Printf("    TTFT=%v  gen=%d tok  chunks=%d  avg_latency=%v  max_latency=%v%s\n",
+			result.TTFT.Round(time.Millisecond),
+			result.TokensGenerated,
+			result.ChunkCount,
+			result.AvgChunkLatency.Round(time.Microsecond),
+			result.MaxChunkLatency.Round(time.Microsecond),
+			specInfo)
 	}
 
 	return result, nil
@@ -301,16 +435,50 @@ func summarize(prompt Prompt, results []IterationResult) PromptSummary {
 
 	var tokGenSum, tokCacheSum float64
 	var peakRSS int64
+	var specDraftedSum, specAcceptedSum float64
+	hasSpec := false
 	for _, r := range valid {
 		tokGenSum += float64(r.TokensGenerated)
 		tokCacheSum += float64(r.TokensCached)
 		if r.RSSBytes > peakRSS {
 			peakRSS = r.RSSBytes
 		}
+		if r.SpecDrafted > 0 {
+			hasSpec = true
+			specDraftedSum += float64(r.SpecDrafted)
+			specAcceptedSum += float64(r.SpecAccepted)
+		}
 	}
 	summary.AvgTokensGen = tokGenSum / float64(len(valid))
 	summary.AvgTokensCached = tokCacheSum / float64(len(valid))
 	summary.PeakRSSBytes = peakRSS
+
+	// Speculative decoding aggregates.
+	if hasSpec {
+		summary.SpeculativeActive = true
+		summary.AvgSpecDrafted = specDraftedSum / float64(len(valid))
+		summary.AvgSpecAccepted = specAcceptedSum / float64(len(valid))
+		summary.SpecAcceptanceRate = computeFloatStats(extractFloats(valid, func(r IterationResult) float64 { return r.SpecAcceptanceRate }))
+	}
+
+	// Streaming aggregates.
+	hasStream := false
+	for _, r := range valid {
+		if r.ChunkCount > 0 {
+			hasStream = true
+			break
+		}
+	}
+	if hasStream {
+		summary.StreamMode = true
+		summary.AvgChunkLatency = computeDurationStats(extractDurations(valid, func(r IterationResult) time.Duration { return r.AvgChunkLatency }))
+		summary.MaxChunkLatency = computeDurationStats(extractDurations(valid, func(r IterationResult) time.Duration { return r.MaxChunkLatency }))
+		var chunkSum float64
+		for _, r := range valid {
+			chunkSum += float64(r.ChunkCount)
+		}
+		summary.AvgChunkCount = chunkSum / float64(len(valid))
+	}
 
 	// Cache hit improvement (for Repeat prompts).
 	if prompt.Repeat && len(cached) > 0 {
@@ -466,6 +634,18 @@ func printSummary(s PromptSummary) {
 	}
 	if s.CacheHitImprove != 0 {
 		fmt.Printf("  Cache:     TTFT improvement=%.1f%%\n", s.CacheHitImprove)
+	}
+	if s.SpeculativeActive {
+		fmt.Printf("  Spec:      acceptance=%.1f%% (avg=%.1f%%)  drafted=%.0f  accepted=%.0f\n",
+			s.SpecAcceptanceRate.Median, s.SpecAcceptanceRate.Mean,
+			s.AvgSpecDrafted, s.AvgSpecAccepted)
+	}
+	if s.StreamMode {
+		fmt.Printf("  Chunks:    avg=%.0f  avg_latency=%v  max_latency=%v (p95=%v)\n",
+			s.AvgChunkCount,
+			s.AvgChunkLatency.Mean.Round(time.Microsecond),
+			s.MaxChunkLatency.Mean.Round(time.Microsecond),
+			s.MaxChunkLatency.P95.Round(time.Microsecond))
 	}
 	if s.Errors > 0 {
 		fmt.Printf("  Errors:    %d/%d\n", s.Errors, s.Iterations+s.Errors)

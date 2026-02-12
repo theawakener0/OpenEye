@@ -39,7 +39,7 @@ func (a *LegacyAdapter) Retrieve(ctx context.Context, query string, limit int) (
 	if a.store == nil {
 		return nil, fmt.Errorf("store not initialized")
 	}
-	entries, err := a.store.Recent(limit)
+	entries, err := a.store.Search(query, limit)
 	if err != nil {
 		return nil, err
 	}

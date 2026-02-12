@@ -91,6 +91,10 @@ clean-llama:
 ## clean-all: Remove everything (Go artifacts + llama.cpp build)
 clean-all: clean clean-llama
 
+## clean-db: Remove all the DBs
+clean-db:
+	rm *.duckdb *.db *.duck.* *.db-* 
+
 ## help: Show available targets
 help:
 	@echo "OpenEye Build System"

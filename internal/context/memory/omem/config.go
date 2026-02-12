@@ -341,7 +341,7 @@ func DefaultConfig() Config {
 			DefaultTopK:                5,
 			ComplexityDelta:            2.0,
 			MaxTopK:                    20,
-			MinScore:                   0.0,
+			MinScore:                   -1.0, // -1 means "unset", will default to 0.0 (no filtering)
 			MaxContextTokens:           1000,
 			RecencyHalfLifeHours:       168, // 1 week
 			ImportanceWeight:           0.15,

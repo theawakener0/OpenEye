@@ -272,7 +272,7 @@ func (g *Generator) getTemplatesForTopic(topic string, persona Persona) []string
 	switch topic {
 	case "work":
 		return []string{
-			"I had a busy day at work today as a %occupation%.",
+			"I've had a busy day at work today as a %occupation%.",
 			"My project at work is going well. Being a %occupation% can be challenging.",
 			"I'm thinking about a new approach to my work as a %occupation%.",
 			"Working in %location% has its perks. The %occupation% scene here is great.",
@@ -281,8 +281,8 @@ func (g *Generator) getTemplatesForTopic(topic string, persona Persona) []string
 		if len(persona.Hobbies) > 0 {
 			return []string{
 				"I spent some time %hobby% today and it was relaxing.",
-				"I'm getting better at %hobby%. It's become my favorite way to unwind.",
-				"Do you have any tips for %hobby%? I want to improve.",
+				"I'm getting better at %hobby%. It's become my favorite hobby.",
+				"Do you have any tips for my hobby %hobby%? I want to improve.",
 				"I've been into %hobby% for a while now. It's really rewarding.",
 			}
 		}
@@ -331,7 +331,7 @@ func (g *Generator) getTemplatesForTopic(topic string, persona Persona) []string
 	case "planning":
 		return []string{
 			"I'm planning something special for %date_event%.",
-			"Next week I want to focus on %goal%.",
+			"Next week I want to focus on %hobby%.",
 			"I should schedule time for %hobby%.",
 			"Thinking about my plans for the upcoming months.",
 		}

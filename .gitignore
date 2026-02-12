@@ -1,6 +1,9 @@
 # Model weights (large binary files)
 models/
 
+# tests and evaluation results
+evaluation/
+
 # Build artifacts
 benchmark_results/
 *.exe
@@ -21,6 +24,8 @@ llama.cpp/build/
 OpenEye
 openeye
 openeye-native
+
+rag_corpus/
 
 # OS
 .DS_Store

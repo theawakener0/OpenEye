@@ -29,8 +29,19 @@ type BenchmarkResult struct {
 	// Recall accuracy (for planted facts)
 	RecallMetrics RecallStats `json:"recall_metrics"`
 
+	// Sub-metric timing for Omem (aggregated)
+	SubMetricLatency SubMetricStats `json:"sub_metric_latency"`
+
 	// Raw measurements for analysis
 	RawMeasurements []Measurement `json:"raw_measurements,omitempty"`
+}
+
+// SubMetricStats holds aggregated sub-metric timing statistics.
+type SubMetricStats struct {
+	EmbeddingLatency  LatencyStats `json:"embedding_latency_us"`
+	LLMLatency        LatencyStats `json:"llm_latency_us"`
+	DBLatency         LatencyStats `json:"db_latency_us"`
+	ProcessingLatency LatencyStats `json:"processing_latency_us"`
 }
 
 // LatencyStats holds statistical summary of latencies.
@@ -87,6 +98,12 @@ type Measurement struct {
 	TokenCount int       `json:"token_count,omitempty"`
 	Success    bool      `json:"success"`
 	Error      string    `json:"error,omitempty"`
+
+	// Sub-metric timing for Omem (in microseconds)
+	EmbeddingLatency  int64 `json:"embedding_latency_us,omitempty"`
+	LLMLatency        int64 `json:"llm_latency_us,omitempty"`
+	DBLatency         int64 `json:"db_latency_us,omitempty"`
+	ProcessingLatency int64 `json:"processing_latency_us,omitempty"`
 }
 
 // MemorySystemAdapter is the interface that all memory systems must implement for benchmarking.
@@ -310,6 +327,9 @@ func (r *BenchmarkRunner) benchmarkSystem(
 		r.mu.Unlock()
 	}
 
+	// Calculate sub-metric statistics from raw measurements
+	result.SubMetricLatency = calculateSubMetricStats(r.measurements)
+
 	// Print summary
 	r.printSummary(result)
 
@@ -422,6 +442,23 @@ func (r *BenchmarkRunner) printSummary(result BenchmarkResult) {
 		result.RecallMetrics.CorrectRecalls,
 		result.RecallMetrics.TotalPlanted)
 	fmt.Printf("Peak Memory:      %.2f MB\n", float64(result.MemoryMetrics.PeakHeapBytes)/(1024*1024))
+
+	// Print sub-metric timing if available
+	if result.SubMetricLatency.EmbeddingLatency.Count > 0 {
+		fmt.Printf("Sub-metric Latency:\n")
+		fmt.Printf("  Embedding:   P50=%.2fus  P95=%.2fus\n",
+			result.SubMetricLatency.EmbeddingLatency.Median,
+			result.SubMetricLatency.EmbeddingLatency.P95)
+		fmt.Printf("  LLM:         P50=%.2fus  P95=%.2fus\n",
+			result.SubMetricLatency.LLMLatency.Median,
+			result.SubMetricLatency.LLMLatency.P95)
+		fmt.Printf("  DB:          P50=%.2fus  P95=%.2fus\n",
+			result.SubMetricLatency.DBLatency.Median,
+			result.SubMetricLatency.DBLatency.P95)
+		fmt.Printf("  Processing:  P50=%.2fus  P95=%.2fus\n",
+			result.SubMetricLatency.ProcessingLatency.Median,
+			result.SubMetricLatency.ProcessingLatency.P95)
+	}
 }
 
 func (r *BenchmarkRunner) saveResult(result BenchmarkResult) {
@@ -604,6 +641,35 @@ func splitWords(s string) []string {
 		words = append(words, s[start:])
 	}
 	return words
+}
+
+func calculateSubMetricStats(measurements []Measurement) SubMetricStats {
+	embeddingTimes := make([]int64, 0)
+	llmTimes := make([]int64, 0)
+	dbTimes := make([]int64, 0)
+	processingTimes := make([]int64, 0)
+
+	for _, m := range measurements {
+		if m.EmbeddingLatency > 0 {
+			embeddingTimes = append(embeddingTimes, m.EmbeddingLatency)
+		}
+		if m.LLMLatency > 0 {
+			llmTimes = append(llmTimes, m.LLMLatency)
+		}
+		if m.DBLatency > 0 {
+			dbTimes = append(dbTimes, m.DBLatency)
+		}
+		if m.ProcessingLatency > 0 {
+			processingTimes = append(processingTimes, m.ProcessingLatency)
+		}
+	}
+
+	return SubMetricStats{
+		EmbeddingLatency:  calculateLatencyStats(embeddingTimes),
+		LLMLatency:        calculateLatencyStats(llmTimes),
+		DBLatency:         calculateLatencyStats(dbTimes),
+		ProcessingLatency: calculateLatencyStats(processingTimes),
+	}
 }
 
 func distanceBucket(distance int) string {

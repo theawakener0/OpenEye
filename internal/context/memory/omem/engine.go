@@ -183,9 +183,16 @@ func (e *Engine) ProcessConversation(ctx context.Context, turns []ConversationTu
 			CreatedAt:  time.Now(),
 		}
 
-		// Generate embedding
+		// Generate embedding from CLEAN text (without role prefix)
+		// Use original turn content if available, otherwise use atomic text
+		embeddingText := fact.AtomicText
+		if len(turns) == 1 && turns[0].Content != "" {
+			// Single turn - use clean content for better query matching
+			embeddingText = strings.TrimSpace(turns[0].Content)
+		}
+
 		if e.embeddingFunc != nil {
-			emb, err := e.embeddingFunc(ctx, fact.AtomicText)
+			emb, err := e.embeddingFunc(ctx, embeddingText)
 			if err == nil {
 				fact.Embedding = emb
 			}

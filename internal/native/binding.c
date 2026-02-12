@@ -76,7 +76,8 @@ oe_model_info_t oe_model_get_info(oe_model_t model) {
 
 oe_context_t oe_context_new(oe_model_t model, uint32_t n_ctx, uint32_t n_batch,
                              int32_t n_threads, int32_t n_threads_batch,
-                             bool embeddings, int32_t flash_attn) {
+                             bool embeddings, int32_t flash_attn,
+                             int32_t type_k, int32_t type_v) {
     struct llama_context_params params = llama_context_default_params();
 
     if (n_ctx > 0)        params.n_ctx          = n_ctx;
@@ -90,6 +91,15 @@ oe_context_t oe_context_new(oe_model_t model, uint32_t n_ctx, uint32_t n_batch,
     if (flash_attn >= 0) {
         params.flash_attn_type = (enum llama_flash_attn_type)flash_attn;
     }
+
+    // KV cache quantization: 0=f16 (default), 1=q8_0, 2=q4_0
+    if (type_k == 1)      params.type_k = GGML_TYPE_Q8_0;
+    else if (type_k == 2) params.type_k = GGML_TYPE_Q4_0;
+    // else keep default (GGML_TYPE_F16)
+
+    if (type_v == 1)      params.type_v = GGML_TYPE_Q8_0;
+    else if (type_v == 2) params.type_v = GGML_TYPE_Q4_0;
+    // else keep default (GGML_TYPE_F16)
 
     struct llama_context *ctx = llama_init_from_model(
         (struct llama_model *)model, params);
@@ -144,6 +154,13 @@ int32_t oe_token_eos(oe_model_t model) {
     struct llama_model *m = (struct llama_model *)model;
     const struct llama_vocab *vocab = llama_model_get_vocab(m);
     return (int32_t)llama_vocab_eos(vocab);
+}
+
+int32_t oe_vocab_n_tokens(oe_model_t model) {
+    if (!model) return 0;
+    struct llama_model *m = (struct llama_model *)model;
+    const struct llama_vocab *vocab = llama_model_get_vocab(m);
+    return llama_vocab_n_tokens(vocab);
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +264,43 @@ int32_t oe_memory_seq_pos_max(oe_context_t ctx, int32_t seq_id) {
     llama_memory_t mem = llama_get_memory((struct llama_context *)ctx);
     if (!mem) return -1;
     return (int32_t)llama_memory_seq_pos_max(mem, (llama_seq_id)seq_id);
+}
+
+void oe_memory_seq_add(oe_context_t ctx, int32_t seq_id,
+                       int32_t p0, int32_t p1, int32_t delta) {
+    if (!ctx) return;
+    llama_memory_t mem = llama_get_memory((struct llama_context *)ctx);
+    if (!mem) return;
+    llama_memory_seq_add(mem, (llama_seq_id)seq_id,
+                          (llama_pos)p0, (llama_pos)p1, (llama_pos)delta);
+}
+
+// ---------------------------------------------------------------------------
+// Speculative decoding
+// ---------------------------------------------------------------------------
+
+int32_t oe_decode_batch_logits_all(oe_context_t ctx, int32_t *tokens,
+                                    int32_t n_tokens, int32_t pos_start) {
+    if (!ctx || !tokens || n_tokens <= 0) return -1;
+    struct llama_context *c = (struct llama_context *)ctx;
+
+    // Allocate a batch with logits enabled for ALL tokens (not just the last).
+    // This allows the target model to verify each draft token against its own
+    // probability distribution during speculative decoding.
+    struct llama_batch batch = llama_batch_init(n_tokens, 0, 1);
+    batch.n_tokens = n_tokens;
+
+    for (int32_t i = 0; i < n_tokens; i++) {
+        batch.token[i]     = (llama_token)tokens[i];
+        batch.pos[i]       = (llama_pos)(pos_start + i);
+        batch.n_seq_id[i]  = 1;
+        batch.seq_id[i][0] = 0;
+        batch.logits[i]    = 1; // logits for ALL tokens
+    }
+
+    int32_t rc = llama_decode(c, batch);
+    llama_batch_free(batch);
+    return rc;
 }
 
 // ---------------------------------------------------------------------------
