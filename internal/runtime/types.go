@@ -86,5 +86,6 @@ type Adapter interface {
 	Name() string
 	Generate(ctx context.Context, req Request) (Response, error)
 	Stream(ctx context.Context, req Request, cb StreamCallback) error
+	ClearContext() error
 	Close() error
 }

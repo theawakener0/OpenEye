@@ -967,6 +967,27 @@ func (a *Adapter) Stream(ctx context.Context, req runtime.Request, cb runtime.St
 	return cb(runtime.StreamEvent{Final: true, Stats: finalStats})
 }
 
+// ClearContext clears the KV cache and resets prompt caching state.
+// This ensures a clean state between HTTP requests, similar to CLI sessions.
+func (a *Adapter) ClearContext() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.ctx == nil {
+		return nil
+	}
+
+	a.ctx.ClearKV()
+	a.lastPromptTokens = nil
+
+	if a.draftCtx != nil {
+		a.draftCtx.ClearKV()
+	}
+
+	log.Printf("native: context cleared for new request")
+	return nil
+}
+
 // Close frees all native resources.
 func (a *Adapter) Close() error {
 	a.mu.Lock()
@@ -1174,7 +1195,11 @@ func (a *Adapter) ensureContextSpace(tokensNeeded int, maxGenerationTokens int) 
 }
 
 // evalTokensWithRecovery evaluates tokens with automatic recovery on KV cache full.
-// This handles the rc=1 error by shifting context and retrying.
+// This implements a progressive fallback strategy:
+// - Attempt 1: Normal evaluation
+// - Attempt 2: Context shift (discard 50% of tokens)
+// - Attempt 3: Full KV clear and retry
+// This handles both "KV cache full" and "decode failed" (inconsistent positions) errors.
 func (a *Adapter) evalTokensWithRecovery(tokens []int32, maxTokens int) error {
 	if !a.autoRecoverFullKV() {
 		// Recovery disabled, just evaluate normally
@@ -1182,6 +1207,11 @@ func (a *Adapter) evalTokensWithRecovery(tokens []int32, maxTokens int) error {
 	}
 
 	maxAttempts := a.maxShiftAttempts()
+	// Ensure we have at least 3 attempts for progressive fallback
+	if maxAttempts < 3 {
+		maxAttempts = 3
+	}
+
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		// Ensure we have space before attempting evaluation
 		a.ensureContextSpace(len(tokens), maxTokens)
@@ -1191,45 +1221,83 @@ func (a *Adapter) evalTokensWithRecovery(tokens []int32, maxTokens int) error {
 			return nil // Success!
 		}
 
-		// Check if this is a recoverable error (KV cache full or decode failed)
 		errStr := err.Error()
-		if !strings.Contains(errStr, "KV cache full") && !strings.Contains(errStr, "decode failed") {
+		log.Printf("native: eval error on attempt %d: %s", attempt+1, errStr)
+
+		// Check if this is a recoverable error
+		isRecoverable := strings.Contains(errStr, "KV cache full") ||
+			strings.Contains(errStr, "decode failed")
+
+		if !isRecoverable {
 			return err // Not a recoverable error
 		}
 
-		// Try to free more space by shifting more aggressively
-		errorType := "KV cache full"
-		if !strings.Contains(errStr, "KV cache full") {
-			errorType = "decode failed"
+		// Progressive fallback strategy
+		switch attempt {
+		case 0:
+			// First failure: Try normal context shift (discard 50%)
+			log.Printf("native: attempt %d - context shift", attempt+1)
+			currentPos := int(a.ctx.Pos())
+			nDiscard := int32(float64(currentPos) * 0.5)
+			if nDiscard < 512 {
+				nDiscard = 512
+			}
+			if nDiscard >= a.ctx.Pos() {
+				nDiscard = a.ctx.Pos() / 2
+			}
+			if nDiscard > 0 {
+				a.ctx.ShiftKV(nDiscard)
+				a.lastPromptTokens = nil
+				if a.draftCtx != nil && a.draftCtx.Pos() >= nDiscard {
+					a.draftCtx.ShiftKV(nDiscard)
+				}
+				log.Printf("native: shifted %d tokens, pos %d → %d", nDiscard, currentPos, a.ctx.Pos())
+			}
+
+		case 1:
+			// Second failure: Try another shift with more aggressive discard
+			log.Printf("native: attempt %d - aggressive context shift", attempt+1)
+			currentPos := int(a.ctx.Pos())
+			// Discard 75% this time
+			nDiscard := int32(float64(currentPos) * 0.75)
+			if nDiscard < 512 {
+				nDiscard = 512
+			}
+			if nDiscard >= a.ctx.Pos() {
+				nDiscard = a.ctx.Pos() - 1
+			}
+			if nDiscard > 0 {
+				a.ctx.ShiftKV(nDiscard)
+				a.lastPromptTokens = nil
+				if a.draftCtx != nil && a.draftCtx.Pos() >= nDiscard {
+					a.draftCtx.ShiftKV(nDiscard)
+				}
+				log.Printf("native: shifted %d tokens, pos %d → %d", nDiscard, currentPos, a.ctx.Pos())
+			}
+
+		default:
+			// Third+ failure: Full KV clear for clean restart
+			log.Printf("native: attempt %d - full KV clear for clean restart", attempt+1)
+			a.ctx.ClearKV()
+			a.lastPromptTokens = nil
+			if a.draftCtx != nil {
+				a.draftCtx.ClearKV()
+			}
+			// One more try with cleared context
+			err = a.evalTokensInChunks(tokens)
+			if err == nil {
+				log.Printf("native: success after full KV clear")
+				return nil
+			}
+			errStr = err.Error()
+			isRecoverable = strings.Contains(errStr, "KV cache full") ||
+				strings.Contains(errStr, "decode failed")
+			if !isRecoverable {
+				return err
+			}
+			// Still failing after clear - log and continue to try again
+			log.Printf("native: still failing after KV clear: %s", errStr)
 		}
-		log.Printf("native: %s on attempt %d, attempting recovery shift...", errorType, attempt+1)
-
-		currentPos := int(a.ctx.Pos())
-
-		// Shift 50% of remaining context (more aggressive than normal)
-		nDiscard := int32(float64(currentPos) * 0.5)
-		if nDiscard < 512 {
-			nDiscard = 512 // Minimum shift
-		}
-		if nDiscard >= a.ctx.Pos() {
-			nDiscard = a.ctx.Pos() / 2
-		}
-		if nDiscard <= 0 {
-			return err // Can't shift anymore
-		}
-
-		a.ctx.ShiftKV(nDiscard)
-		a.lastPromptTokens = nil
-
-		if a.draftCtx != nil && a.draftCtx.Pos() >= nDiscard {
-			a.draftCtx.ShiftKV(nDiscard)
-		}
-
-		log.Printf("native: recovery shift — discarded %d tokens, pos %d → %d",
-			nDiscard, currentPos, a.ctx.Pos())
-
-		// Retry with the same tokens after shifting
-		continue
 	}
 
 	return fmt.Errorf("native: failed to evaluate after %d recovery attempts", maxAttempts)

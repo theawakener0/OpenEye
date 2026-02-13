@@ -290,6 +290,15 @@ func (p *Pipeline) Close() error {
 	return firstErr
 }
 
+// ClearContext clears the runtime context state between requests.
+// This ensures a clean state for HTTP servers, similar to CLI sessions.
+func (p *Pipeline) ClearContext() error {
+	if p == nil || p.manager == nil {
+		return nil
+	}
+	return p.manager.ClearContext()
+}
+
 // GetMemoryStats returns statistics about the memory system.
 func (p *Pipeline) GetMemoryStats(ctx context.Context) (map[string]interface{}, error) {
 	if p == nil {

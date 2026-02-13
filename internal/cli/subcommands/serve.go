@@ -119,6 +119,12 @@ func runHTTPServer(ctx context.Context, host string, port int, backend string, p
 				log.Printf("Processing request with %d image(s)", len(images))
 			}
 
+			// Clear context to ensure clean state between HTTP requests
+			// This prevents prompt caching issues that accumulate across requests
+			if err := pipe.ClearContext(); err != nil {
+				log.Printf("warning: failed to clear context: %v", err)
+			}
+
 			opts := pipeline.Options{
 				Stream: inbound.Stream,
 				StreamCallback: func(evt runtime.StreamEvent) error {

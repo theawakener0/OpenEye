@@ -247,3 +247,9 @@ func (c *Client) GenerateStream(ctx context.Context, req CompletionRequest, cb S
 
 	return scanner.Err()
 }
+
+// ClearContext is a no-op for HTTP client since it's stateless.
+// Each request is independent.
+func (c *Client) ClearContext() error {
+	return nil
+}

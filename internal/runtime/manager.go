@@ -57,6 +57,15 @@ func (m *Manager) Stream(ctx context.Context, req Request, cb StreamCallback) er
 	return m.adapter.Stream(ctx, req, cb)
 }
 
+// ClearContext clears the adapter's context state between requests.
+// This is used by HTTP servers to ensure clean state between requests.
+func (m *Manager) ClearContext() error {
+	if m == nil || m.adapter == nil {
+		return nil
+	}
+	return m.adapter.ClearContext()
+}
+
 // Registry maps backend keys to factories initialising adapters.
 type Registry map[string]AdapterFactory
 

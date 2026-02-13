@@ -230,3 +230,9 @@ func chunkForStreaming(text string) []string {
 	flush()
 	return tokens
 }
+
+// ClearContext is a no-op for HTTP adapter since it's stateless.
+// Each request is independent.
+func (a *Adapter) ClearContext() error {
+	return nil
+}
