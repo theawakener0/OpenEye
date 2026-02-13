@@ -565,11 +565,14 @@ func (p *Pipeline) Respond(ctx context.Context, message string, images []string,
 		}
 
 		text := builder.String()
+		if text == "" {
+			text = "I'm ready to help. How can I assist you today?"
+		}
 		if err := p.store.Append("assistant", text); err != nil {
 			log.Printf("warning: pipeline failed to persist assistant turn: %v", err)
 		}
 		// Also store in vector memory engine
-		if p.vectorEngine != nil {
+		if p.vectorEngine != nil && text != "" {
 			if _, err := p.vectorEngine.Store(ctx, text, "assistant"); err != nil {
 				log.Printf("warning: pipeline failed to store assistant turn in vector memory: %v", err)
 			}
@@ -591,12 +594,17 @@ func (p *Pipeline) Respond(ctx context.Context, message string, images []string,
 		return Result{}, err
 	}
 
-	if err := p.store.Append("assistant", response.Text); err != nil {
+	text := response.Text
+	if text == "" {
+		text = "I'm ready to help. How can I assist you today?"
+	}
+
+	if err := p.store.Append("assistant", text); err != nil {
 		log.Printf("warning: pipeline failed to persist assistant turn: %v", err)
 	}
 	// Also store in vector memory engine
-	if p.vectorEngine != nil {
-		if _, err := p.vectorEngine.Store(ctx, response.Text, "assistant"); err != nil {
+	if p.vectorEngine != nil && text != "" {
+		if _, err := p.vectorEngine.Store(ctx, text, "assistant"); err != nil {
 			log.Printf("warning: pipeline failed to store assistant turn in vector memory: %v", err)
 		}
 	}
@@ -604,10 +612,10 @@ func (p *Pipeline) Respond(ctx context.Context, message string, images []string,
 	// Learn from this conversation turn (async, non-blocking)
 	if p.omemHook != nil {
 		turnID := fmt.Sprintf("%d", time.Now().UnixNano())
-		p.omemHook.OnAfterGenerate(ctx, normalized, response.Text, turnID)
+		p.omemHook.OnAfterGenerate(ctx, normalized, text, turnID)
 	}
 
-	result := Result{Text: response.Text, Stats: response.Stats, Summary: summary, Retrieved: retrieved}
+	result := Result{Text: text, Stats: response.Stats, Summary: summary, Retrieved: retrieved}
 	p.responseCache.Store(cacheKey, result)
 	return result, nil
 }

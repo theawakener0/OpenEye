@@ -132,12 +132,27 @@ func runHTTPServer(ctx context.Context, host string, port int, backend string, p
 				},
 			}
 
-			// Apply custom options if provided
-			if temp, ok := inbound.Options["temperature"].(float64); ok {
+			// Apply custom options if provided (non-zero values override config defaults)
+			if temp, ok := inbound.Options["temperature"].(float64); ok && temp != 0 {
 				opts.GenerationHints.Temperature = temp
 			}
-			if maxTokens, ok := inbound.Options["max_tokens"].(float64); ok {
+			if maxTokens, ok := inbound.Options["max_tokens"].(float64); ok && maxTokens != 0 {
 				opts.GenerationHints.MaxTokens = int(maxTokens)
+			}
+			if topK, ok := inbound.Options["top_k"].(float64); ok && topK != 0 {
+				opts.GenerationHints.TopK = int(topK)
+			}
+			if topP, ok := inbound.Options["top_p"].(float64); ok && topP != 0 {
+				opts.GenerationHints.TopP = topP
+			}
+			if minP, ok := inbound.Options["min_p"].(float64); ok && minP != 0 {
+				opts.GenerationHints.MinP = minP
+			}
+			if repeatPenalty, ok := inbound.Options["repeat_penalty"].(float64); ok && repeatPenalty != 0 {
+				opts.GenerationHints.RepeatPenalty = repeatPenalty
+			}
+			if repeatLastN, ok := inbound.Options["repeat_last_n"].(float64); ok && repeatLastN != 0 {
+				opts.GenerationHints.RepeatLastN = int(repeatLastN)
 			}
 
 			result, runErr := pipe.Respond(context.Background(), inbound.Content, images, opts)
