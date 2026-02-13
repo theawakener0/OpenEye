@@ -93,7 +93,7 @@ clean-all: clean clean-llama
 
 ## clean-db: Remove all the DBs
 clean-db:
-	rm *.duckdb *.db *.duck.* *.db-* 
+	rm *.duckdb *.db *.duckdb.* *.db-* 
 
 ## help: Show available targets
 help:

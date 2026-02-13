@@ -3,7 +3,7 @@ package omem
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strings"
@@ -103,17 +103,17 @@ func applyRetrievalDefaults(cfg RetrievalConfig) RetrievalConfig {
 
 // Retrieve performs adaptive retrieval for a query.
 func (ar *AdaptiveRetriever) Retrieve(ctx context.Context, req RetrievalRequest) (*RetrievalResult, error) {
-	fmt.Printf("\n=== RETRIEVE START ===\n")
-	fmt.Printf("Query: %s\n", req.Query)
+	log.Printf("\n=== RETRIEVE START ===\n")
+	log.Printf("Query: %s\n", req.Query)
 
 	if ar == nil || ar.store == nil {
-		fmt.Printf("ERROR: retriever not initialized\n")
+		log.Printf("ERROR: retriever not initialized\n")
 		return nil, errors.New("adaptive retriever not initialized")
 	}
 
 	req.Query = strings.TrimSpace(req.Query)
 	if req.Query == "" {
-		fmt.Printf("WARNING: empty query\n")
+		log.Printf("WARNING: empty query\n")
 		return &RetrievalResult{}, nil
 	}
 
@@ -124,7 +124,7 @@ func (ar *AdaptiveRetriever) Retrieve(ctx context.Context, req RetrievalRequest)
 	// Step 1: Analyze query complexity
 	complexity := ar.complexity.EstimateComplexity(req.Query)
 	queryType := ar.complexity.ClassifyQuery(req.Query)
-	fmt.Printf("Complexity score: %.3f, DynamicK: %d, Entities: %v\n",
+	log.Printf("Complexity score: %.3f, DynamicK: %d, Entities: %v\n",
 		complexity.TotalScore, complexity.DynamicK, complexity.Entities)
 
 	// Step 2: Determine retrieval depth
@@ -132,48 +132,48 @@ func (ar *AdaptiveRetriever) Retrieve(ctx context.Context, req RetrievalRequest)
 	if topK <= 0 {
 		topK = complexity.DynamicK
 	}
-	fmt.Printf("TopK: %d\n", topK)
+	log.Printf("TopK: %d\n", topK)
 
 	// Step 3: Extract keywords for lexical search
 	keywords := ar.complexity.ExtractQueryKeywords(req.Query)
-	fmt.Printf("Keywords: %v\n", keywords)
+	log.Printf("Keywords: %v\n", keywords)
 
 	// Step 4: Generate query embedding for semantic search
 	var queryEmbedding []float32
 	if ar.embeddingFunc != nil {
-		fmt.Printf("Generating embedding...\n")
+		log.Printf("Generating embedding...\n")
 		emb, err := ar.embeddingFunc(ctx, req.Query)
 		if err != nil {
-			fmt.Printf("ERROR: embedding generation failed: %v\n", err)
+			log.Printf("ERROR: embedding generation failed: %v\n", err)
 		} else {
 			queryEmbedding = emb
-			fmt.Printf("Embedding generated: dim=%d, first5=[%.4f, %.4f, %.4f, %.4f, %.4f]\n",
+			log.Printf("Embedding generated: dim=%d, first5=[%.4f, %.4f, %.4f, %.4f, %.4f]\n",
 				len(emb), emb[0], emb[1], emb[2], emb[3], emb[4])
 		}
 	} else {
-		fmt.Printf("WARNING: no embedding function available\n")
+		log.Printf("WARNING: no embedding function available\n")
 	}
 
 	// Step 5: Perform hybrid search
-	fmt.Printf("Performing hybrid search with limit=%d...\n", topK*3)
+	log.Printf("Performing hybrid search with limit=%d...\n", topK*3)
 	candidates, err := ar.hybridSearch(ctx, queryEmbedding, keywords, complexity.Entities, topK*3)
 	if err != nil {
-		fmt.Printf("ERROR: hybrid search failed: %v\n", err)
+		log.Printf("ERROR: hybrid search failed: %v\n", err)
 		return nil, err
 	}
-	fmt.Printf("Hybrid search returned %d candidates\n", len(candidates))
+	log.Printf("Hybrid search returned %d candidates\n", len(candidates))
 
 	totalCandidates := len(candidates)
 
 	// Step 6: Apply graph boost
 	candidates = ar.applyGraphBoost(ctx, candidates, complexity.Entities)
-	fmt.Printf("After graph boost: %d candidates\n", len(candidates))
+	log.Printf("After graph boost: %d candidates\n", len(candidates))
 
 	// Step 7: Calculate final scores
 	candidates = ar.calculateFinalScores(candidates, req.CurrentTime)
-	fmt.Printf("After score calculation: %d candidates\n", len(candidates))
+	log.Printf("After score calculation: %d candidates\n", len(candidates))
 	if len(candidates) > 0 {
-		fmt.Printf("Score range: %.3f - %.3f\n", candidates[0].Score, candidates[len(candidates)-1].Score)
+		log.Printf("Score range: %.3f - %.3f\n", candidates[0].Score, candidates[len(candidates)-1].Score)
 	}
 
 	// Step 8: Sort and filter
@@ -181,9 +181,9 @@ func (ar *AdaptiveRetriever) Retrieve(ctx context.Context, req RetrievalRequest)
 	if minScore <= 0 {
 		minScore = ar.config.MinScore
 	}
-	fmt.Printf("Filtering by minScore=%.3f...\n", minScore)
+	log.Printf("Filtering by minScore=%.3f...\n", minScore)
 	candidates = ar.filterByScore(candidates, minScore)
-	fmt.Printf("After filtering: %d candidates\n", len(candidates))
+	log.Printf("After filtering: %d candidates\n", len(candidates))
 	candidates = ar.sortByScore(candidates)
 
 	// Step 9: Truncate to topK
@@ -215,8 +215,8 @@ func (ar *AdaptiveRetriever) Retrieve(ctx context.Context, req RetrievalRequest)
 	// Step 11: Update access counts for retrieved facts
 	go ar.updateAccessCounts(ctx, candidates)
 
-	fmt.Printf("=== RETRIEVE END ===\n")
-	fmt.Printf("Returning %d facts (from %d total candidates)\n\n", len(candidates), totalCandidates)
+	log.Printf("=== RETRIEVE END ===\n")
+	log.Printf("Returning %d facts (from %d total candidates)\n\n", len(candidates), totalCandidates)
 
 	return result, nil
 }
@@ -235,9 +235,9 @@ func (ar *AdaptiveRetriever) hybridSearch(
 	if len(queryEmbedding) > 0 && ar.store != nil {
 		semanticResults, err := ar.store.SemanticSearch(ctx, queryEmbedding, limit)
 		if err != nil {
-			fmt.Printf("Warning: semantic search failed: %v\n", err)
+			log.Printf("Warning: semantic search failed: %v\n", err)
 		} else {
-			fmt.Printf("Debug: semantic search returned %d results\n", len(semanticResults))
+			log.Printf("Debug: semantic search returned %d results\n", len(semanticResults))
 			for _, sf := range semanticResults {
 				sf.SemanticScore = sf.Score
 				results = append(results, sf)
@@ -245,10 +245,10 @@ func (ar *AdaptiveRetriever) hybridSearch(
 		}
 	} else {
 		if len(queryEmbedding) == 0 {
-			fmt.Printf("Debug: skipping semantic search - no query embedding\n")
+			log.Printf("Debug: skipping semantic search - no query embedding\n")
 		}
 		if ar.store == nil {
-			fmt.Printf("Debug: skipping semantic search - no store\n")
+			log.Printf("Debug: skipping semantic search - no store\n")
 		}
 	}
 
@@ -256,9 +256,9 @@ func (ar *AdaptiveRetriever) hybridSearch(
 	if len(keywords) > 0 && ar.store != nil {
 		lexicalResults, err := ar.store.FTSSearch(ctx, strings.Join(keywords, " "), limit)
 		if err != nil {
-			fmt.Printf("Warning: lexical search failed: %v\n", err)
+			log.Printf("Warning: lexical search failed: %v\n", err)
 		} else {
-			fmt.Printf("Debug: lexical search returned %d results\n", len(lexicalResults))
+			log.Printf("Debug: lexical search returned %d results\n", len(lexicalResults))
 			for _, sf := range lexicalResults {
 				sf.LexicalScore = sf.Score
 				results = append(results, sf)
@@ -266,22 +266,22 @@ func (ar *AdaptiveRetriever) hybridSearch(
 		}
 	} else {
 		if len(keywords) == 0 {
-			fmt.Printf("Debug: skipping lexical search - no keywords\n")
+			log.Printf("Debug: skipping lexical search - no keywords\n")
 		}
 	}
 
 	// Entity-based retrieval (if entities detected and graph available)
 	if len(entities) > 0 && ar.graph != nil {
-		fmt.Printf("Debug: searching by entities: %v\n", entities)
+		log.Printf("Debug: searching by entities: %v\n", entities)
 		factIDs, err := ar.graph.GetFactsForEntities(ctx, entities)
 		if err != nil {
-			fmt.Printf("Warning: entity search failed: %v\n", err)
+			log.Printf("Warning: entity search failed: %v\n", err)
 		} else if len(factIDs) > 0 {
 			entityFacts, err := ar.store.GetFactsByIDs(ctx, factIDs)
 			if err != nil {
-				fmt.Printf("Warning: failed to get entity facts: %v\n", err)
+				log.Printf("Warning: failed to get entity facts: %v\n", err)
 			} else {
-				fmt.Printf("Debug: entity search returned %d facts\n", len(entityFacts))
+				log.Printf("Debug: entity search returned %d facts\n", len(entityFacts))
 				for _, fact := range entityFacts {
 					results = append(results, ScoredFact{
 						Fact:          fact,
@@ -291,11 +291,11 @@ func (ar *AdaptiveRetriever) hybridSearch(
 				}
 			}
 		} else {
-			fmt.Printf("Debug: no facts found for entities: %v\n", entities)
+			log.Printf("Debug: no facts found for entities: %v\n", entities)
 		}
 	}
 
-	fmt.Printf("Debug: hybrid search total results before dedup: %d\n", len(results))
+	log.Printf("Debug: hybrid search total results before dedup: %d\n", len(results))
 
 	// Deduplicate by fact ID and merge scores
 	return ar.deduplicateAndMerge(results), nil

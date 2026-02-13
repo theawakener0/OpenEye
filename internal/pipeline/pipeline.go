@@ -375,10 +375,14 @@ func (p *Pipeline) Respond(ctx context.Context, message string, images []string,
 	}
 
 	// Process images (resize, format)
+	log.Printf("pipeline: received %d image(s) from CLI", len(images))
 	processedImages, err := p.processImages(ctx, images)
 	if err != nil {
 		log.Printf("warning: failed to process images: %v", err)
 		processedImages = images // Fallback to original
+	}
+	if len(processedImages) > 0 {
+		log.Printf("pipeline: processed %d image(s)", len(processedImages))
 	}
 
 	// Check cache
@@ -529,7 +533,7 @@ func (p *Pipeline) Respond(ctx context.Context, message string, images []string,
 
 	// Log if images are being sent
 	if len(processedImages) > 0 {
-		log.Printf("sending request with %d image(s)", len(processedImages))
+		log.Printf("pipeline: sending request with %d image(s) to runtime", len(processedImages))
 	}
 
 	req := runtime.Request{Prompt: prompt, Image: processedImages}

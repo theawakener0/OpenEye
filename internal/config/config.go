@@ -656,7 +656,7 @@ func Default() Config {
 			Quality:             85,
 			PreserveAspectRatio: true,
 			AutoDetectInput:     true,
-			OutputAsBase64:      true,
+			OutputAsBase64:      false,
 		},
 	}
 }
