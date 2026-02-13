@@ -51,8 +51,9 @@ graph TB
         MTMD["mtmd<br/>(vision/multimodal)"]
     end
 
-    subgraph TRANSPORT["Wearable Transport"]
-        SERVER[TCP Server]
+    subgraph TRANSPORT["Transport Layer"]
+        HTTPSERVER[HTTP Server<br/>REST API]
+        TCPSERVER[TCP Server<br/>Legacy / Wearables]
         CLIENT[TCP Client<br/>ESP32 / Wearables]
     end
 
@@ -70,9 +71,11 @@ graph TB
     GOWRAP --> CBIND
     CBIND --> LLAMA
     CBIND --> MTMD
-    SERVE --> SERVER
-    SERVER --> PIPELINE
-    CLIENT == TCP ==> SERVER
+    SERVE --> HTTPSERVER
+    SERVE --> TCPSERVER
+    HTTPSERVER --> PIPELINE
+    TCPSERVER --> PIPELINE
+    CLIENT == TCP ==> TCPSERVER
     RAG --> EMB
     OMEM --> EMB
     MEM0 --> EMB
@@ -310,7 +313,7 @@ All settings can be overridden with environment variables (e.g., `APP_NATIVE_MOD
 | `chat` | Single prompt against the runtime |
 | `cli` | Interactive ANSI conversation mode |
 | `tui` | Interactive Charm-based TUI with Markdown rendering |
-| `serve` | Start TCP server for wearable clients |
+| `serve` | Start HTTP (default) or TCP server for API clients |
 | `memory` | Inspect and manage conversation memory |
 | `benchmark` | Run memory system benchmarks (omem vs legacy) |
 | `infer-bench` | Run inference benchmarks (TTFT, TPS, cache effectiveness) |
@@ -331,8 +334,21 @@ All settings can be overridden with environment variables (e.g., `APP_NATIVE_MOD
 ./openeye cli                  # Traditional ANSI terminal
 ./openeye tui                  # Modern TUI with Markdown support
 
-# Server mode (for ESP32 / wearable clients)
+# Server mode (HTTP REST API - default on port 8080)
 ./openeye serve
+
+# Or TCP mode (legacy)
+./openeye serve --type tcp
+
+# Make HTTP requests
+curl -X POST http://localhost:8080/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello!"}'
+
+# With streaming
+curl -X POST http://localhost:8080/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Tell me a story", "stream": true}'
 
 # Memory management
 ./openeye memory --stats

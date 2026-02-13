@@ -1191,14 +1191,18 @@ func (a *Adapter) evalTokensWithRecovery(tokens []int32, maxTokens int) error {
 			return nil // Success!
 		}
 
-		// Check if this is a KV cache full error
+		// Check if this is a recoverable error (KV cache full or decode failed)
 		errStr := err.Error()
-		if !strings.Contains(errStr, "KV cache full") {
+		if !strings.Contains(errStr, "KV cache full") && !strings.Contains(errStr, "decode failed") {
 			return err // Not a recoverable error
 		}
 
 		// Try to free more space by shifting more aggressively
-		log.Printf("native: KV cache full on attempt %d, attempting recovery shift...", attempt+1)
+		errorType := "KV cache full"
+		if !strings.Contains(errStr, "KV cache full") {
+			errorType = "decode failed"
+		}
+		log.Printf("native: %s on attempt %d, attempting recovery shift...", errorType, attempt+1)
 
 		currentPos := int(a.ctx.Pos())
 
@@ -1228,7 +1232,7 @@ func (a *Adapter) evalTokensWithRecovery(tokens []int32, maxTokens int) error {
 		continue
 	}
 
-	return fmt.Errorf("native: failed to evaluate after %d recovery attempts: KV cache persistently full", maxAttempts)
+	return fmt.Errorf("native: failed to evaluate after %d recovery attempts", maxAttempts)
 }
 
 // getOrBuildSampler returns a sampler chain for the given options, reusing

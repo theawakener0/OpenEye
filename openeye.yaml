@@ -4,15 +4,15 @@
 runtime:
   backend: native
   native:
-    model_path: "models/SmolVLM2-2.2B-Instruct-Q8_0.gguf"
-    mmproj_path: "models/mmproj-SmolVLM2-2.2B-Instruct-Q8_0.gguf"  # Vision projector for multimodal (optional)
+    model_path: "models/LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
+    # mmproj_path: "models/mmproj-SmolVLM2-2.2B-Instruct-Q8_0.gguf"  # Vision projector for multimodal (optional)
     context_size: 4096                               # INCREASED: Larger context window for unlimited feel
     threads: 4
     batch_size: 1024                                 # ADJUSTED: Must be < context_size, optimized for throughput
     # threads_batch: 4                                # Threads for batch processing (defaults to threads)
     warmup: true
     # --- Inference Optimizations ---
-    kv_cache_type: "q8_0"                            # KV cache quantization: f16, q8_0, q4_0
+    kv_cache_type: "q4_0"                            # KV cache quantization: f16, q8_0, q4_0
     stream_chunk_size: 1                            # CHANGED: Lower latency for real-time feel (was 3)
     context_shift: true                             # Auto-shift KV cache when context fills
     

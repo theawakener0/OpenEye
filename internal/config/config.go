@@ -335,8 +335,9 @@ type Mem0SummaryConfig struct {
 	Async           bool   `yaml:"async"`
 }
 
-// ServerConfig defines TCP server settings for the message transport.
+// ServerConfig defines server settings for the message transport.
 type ServerConfig struct {
+	Type    string `yaml:"type"`
 	Host    string `yaml:"host"`
 	Port    int    `yaml:"port"`
 	Enabled *bool  `yaml:"enabled"`
@@ -603,8 +604,9 @@ func Default() Config {
 			},
 		},
 		Server: ServerConfig{
+			Type:    "http",
 			Host:    "127.0.0.1",
-			Port:    42067,
+			Port:    8080,
 			Enabled: boolPtr(true),
 		},
 		Conversation: ConversationConfig{},
@@ -1073,6 +1075,9 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.Server.Enabled = boolPtr(enabled)
 		}
 	}
+	if v := strings.TrimSpace(os.Getenv("APP_SERVER_TYPE")); v != "" {
+		cfg.Server.Type = v
+	}
 	if v := strings.TrimSpace(os.Getenv("APP_RAG_ENABLED")); v != "" {
 		if enabled, err := strconv.ParseBool(v); err == nil {
 			cfg.RAG.Enabled = enabled
@@ -1170,9 +1175,17 @@ func applyEnvOverrides(cfg *Config) {
 	}
 }
 
-// ServerEnabled reports if the TCP server should be started.
+// ServerEnabled reports if the server should be started.
 func (c Config) ServerEnabled() bool {
 	return c.Server.Enabled != nil && *c.Server.Enabled
+}
+
+// ServerType returns the server type (http or tcp), defaulting to http.
+func (c Config) ServerType() string {
+	if c.Server.Type == "" {
+		return "http"
+	}
+	return c.Server.Type
 }
 
 // mergeMem0Config merges mem0 configuration with overrides.

@@ -51,7 +51,7 @@ func Execute() int {
 	case "tui":
 		return runCli(ctx, cfg, registry, args[1:], true)
 	case "serve":
-		return subcommands.RunServe(ctx, cfg)
+		return subcommands.RunServe(ctx, cfg, args[1:])
 	case "memory":
 		return subcommands.RunMemory(cfg, args[1:])
 	case "benchmark":

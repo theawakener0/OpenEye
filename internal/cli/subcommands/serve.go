@@ -2,11 +2,13 @@ package subcommands
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,10 +18,45 @@ import (
 	"OpenEye/server"
 )
 
-// RunServe starts the TCP server and processes inbound prompts through the runtime.
-func RunServe(ctx context.Context, cfg config.Config) int {
+// RunServe starts the server and processes inbound prompts through the runtime.
+// Supports both HTTP and TCP server types based on configuration.
+func RunServe(ctx context.Context, cfg config.Config, args []string) int {
 	if !cfg.ServerEnabled() {
 		fmt.Fprintln(os.Stderr, "server disabled by configuration")
+		return 1
+	}
+
+	// Parse CLI flags
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	hostFlag := fs.String("host", "", "Server host address (overrides config)")
+	portFlag := fs.Int("port", 0, "Server port (overrides config)")
+	typeFlag := fs.String("type", "", "Server type: http or tcp (overrides config)")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to parse flags: %v\n", err)
+		return 1
+	}
+
+	// Apply CLI overrides to config
+	host := cfg.Server.Host
+	if *hostFlag != "" {
+		host = *hostFlag
+	}
+	if host == "" {
+		host = "127.0.0.1"
+	}
+
+	port := cfg.Server.Port
+	if *portFlag > 0 {
+		port = *portFlag
+	}
+
+	serverType := cfg.ServerType()
+	if *typeFlag != "" {
+		serverType = strings.ToLower(*typeFlag)
+	}
+	if serverType != "http" && serverType != "tcp" {
+		fmt.Fprintf(os.Stderr, "invalid server type: %s (must be http or tcp)\n", serverType)
 		return 1
 	}
 
@@ -34,31 +71,110 @@ func RunServe(ctx context.Context, cfg config.Config) int {
 		}
 	}()
 
-	host := cfg.Server.Host
-	if host == "" {
-		host = "127.0.0.1"
-	}
+	sigCtx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 
-	tcpServer := server.NewTCPServer(host, strconv.Itoa(cfg.Server.Port))
+	// Route to appropriate server type
+	if serverType == "http" {
+		return runHTTPServer(sigCtx, host, port, cfg.Runtime.Backend, pipe)
+	}
+	return runTCPServer(sigCtx, host, port, pipe)
+}
+
+// runHTTPServer starts the HTTP server and handles requests
+func runHTTPServer(ctx context.Context, host string, port int, backend string, pipe *pipeline.Pipeline) int {
+	httpServer := server.NewHTTPServer(host, strconv.Itoa(port))
+	if err := httpServer.Start(backend); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to start HTTP server: %v\n", err)
+		return 1
+	}
+	defer func() {
+		if stopErr := httpServer.Stop(); stopErr != nil {
+			log.Printf("warning: failed to stop HTTP server: %v", stopErr)
+		}
+	}()
+
+	fmt.Printf("OpenEye HTTP server listening on http://%s:%d\n", host, port)
+	fmt.Printf("  Health:   http://%s:%d/health\n", host, port)
+	fmt.Printf("  Chat API: http://%s:%d/v1/chat\n", host, port)
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("HTTP server shutting down")
+			return 0
+		default:
+		}
+
+		msg, err := httpServer.Receive()
+		if err != nil {
+			log.Printf("receive error: %v", err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+
+		go func(inbound server.HTTPMessage) {
+			images := inbound.Images
+			if len(images) > 0 {
+				log.Printf("Processing request with %d image(s)", len(images))
+			}
+
+			opts := pipeline.Options{
+				Stream: inbound.Stream,
+				StreamCallback: func(evt runtime.StreamEvent) error {
+					if evt.Err != nil {
+						return evt.Err
+					}
+					if !evt.Final {
+						return inbound.StreamToken(evt.Token)
+					}
+					return nil
+				},
+			}
+
+			// Apply custom options if provided
+			if temp, ok := inbound.Options["temperature"].(float64); ok {
+				opts.GenerationHints.Temperature = temp
+			}
+			if maxTokens, ok := inbound.Options["max_tokens"].(float64); ok {
+				opts.GenerationHints.MaxTokens = int(maxTokens)
+			}
+
+			result, runErr := pipe.Respond(context.Background(), inbound.Content, images, opts)
+			if runErr != nil {
+				log.Printf("runtime error: %v", runErr)
+				if respErr := inbound.RespondError(runErr); respErr != nil {
+					log.Printf("response error: %v", respErr)
+				}
+				return
+			}
+			if respErr := inbound.Respond(result.Text); respErr != nil {
+				log.Printf("response error: %v", respErr)
+			}
+			log.Printf("response: %s", truncateResponse(result.Text, 100))
+		}(msg)
+	}
+}
+
+// runTCPServer starts the TCP server and handles requests
+func runTCPServer(ctx context.Context, host string, port int, pipe *pipeline.Pipeline) int {
+	tcpServer := server.NewTCPServer(host, strconv.Itoa(port))
 	if err := tcpServer.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start TCP server: %v\n", err)
 		return 1
 	}
 	defer func() {
 		if stopErr := tcpServer.Stop(); stopErr != nil {
-			log.Printf("warning: failed to stop server: %v", stopErr)
+			log.Printf("warning: failed to stop TCP server: %v", stopErr)
 		}
 	}()
 
-	fmt.Printf("OpenEye server listening on %s:%d\n", host, cfg.Server.Port)
-
-	sigCtx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer cancel()
+	fmt.Printf("OpenEye TCP server listening on %s:%d\n", host, port)
 
 	for {
 		select {
-		case <-sigCtx.Done():
-			fmt.Println("server shutting down")
+		case <-ctx.Done():
+			fmt.Println("TCP server shutting down")
 			return 0
 		default:
 		}
@@ -71,13 +187,11 @@ func RunServe(ctx context.Context, cfg config.Config) int {
 		}
 
 		go func(inbound server.Message) {
-			// Use images from the message if provided
-			var images []string
-			if len(inbound.Images) > 0 {
-				images = inbound.Images
+			images := inbound.Images
+			if len(images) > 0 {
 				log.Printf("Processing request with %d image(s)", len(images))
 			}
-			
+
 			opts := pipeline.Options{
 				Stream: true,
 				StreamCallback: func(evt runtime.StreamEvent) error {
@@ -90,6 +204,7 @@ func RunServe(ctx context.Context, cfg config.Config) int {
 					return nil
 				},
 			}
+
 			result, runErr := pipe.Respond(context.Background(), inbound.Content, images, opts)
 			if runErr != nil {
 				log.Printf("runtime error: %v", runErr)

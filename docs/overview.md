@@ -34,8 +34,13 @@ OpenEye implements a sophisticated multi-tier memory architecture to provide lon
 4. **Omem (OpenEye Memory)**: A next-generation memory engine combining atomic fact encoding, multi-view indexing (semantic, lexical, and symbolic), and a lightweight entity-relationship graph for high-precision retrieval and temporal reasoning.
 
 ### Transport (`server` and `client`)
-- `server/tcp_server.go` exposes a TCP listener that accepts newline-delimited messages, acknowledges receipt, and responds with base64 encoded `RESP` or `ERR` frames once the pipeline returns.
+- `server/http_server.go` exposes an HTTP REST API (default) with JSON endpoints:
+  - `GET /health` – Health check with server status
+  - `POST /v1/chat` – Chat inference with streaming support via Server-Sent Events
+- `server/tcp_server.go` exposes a TCP listener (legacy mode) that accepts newline-delimited messages and responds with base64 encoded `RESP` or `ERR` frames once the pipeline returns.
 - `client/tcp_client.go` wraps connection management and understands the same protocol. `SendAndReceive` is the high-level helper that takes care of the entire round trip.
+
+The server type is configured via `server.type` in the config file (`http` or `tcp`) and can be overridden at runtime with `--type` flag.
 
 ## Request Lifecycle
 
@@ -45,7 +50,7 @@ OpenEye implements a sophisticated multi-tier memory architecture to provide lon
 4. **Model Invocation** – The adapter issues an HTTP request to the local LLM endpoint (or other adapters in the future) and returns a structured response.
 5. **Streaming (Optional)** – When streaming is requested, callbacks receive incremental tokens or chunks. The pipeline buffers them before persisting.
 6. **Persistence** – User and assistant turns are appended to the short-term memory store. New facts are extracted and indexed by Omem for long-term recall.
-7. **Transport Response** – CLI prints the final text; the TCP server packages the reply and ships it back to the originating client.
+7. **Transport Response** – CLI prints the final text; the HTTP or TCP server packages the reply and ships it back to the originating client.
 
 ## Configuration
 
@@ -74,8 +79,9 @@ memory:
   path: "openeye_memory.db"
   turns_to_use: 6
 server:
+  type: "http"        # Server type: http or tcp
   host: "127.0.0.1"
-  port: 42067
+  port: 8080          # Default: 8080 (http), 42067 (tcp)
   enabled: true
 conversation:
   system_message: ""  # optional override
@@ -168,9 +174,10 @@ USE_REAL_MODELS=true go test -v ./internal/context/memory/benchmark -run TestHar
 | `APP_MEMORY_TURNS`   | Overrides `memory.turns_to_use`.         |
 | `APP_SYSMSG`         | Overrides `conversation.system_message`. |
 | `APP_CONTEXT_PATH`   | Overrides `conversation.template_path`.  |
+| `APP_SERVER_TYPE`    | Overrides `server.type` (`http` or `tcp`).                |
 | `APP_SERVER_HOST`    | Overrides `server.host`.                 |
 | `APP_SERVER_PORT`    | Overrides `server.port`.                 |
-| `APP_SERVER_ENABLED` | Enables or disables the TCP server.      |
+| `APP_SERVER_ENABLED` | Enables or disables the server.          |
 
 **Retrieval helpers**
 
@@ -276,11 +283,16 @@ OpenEye chat --message "Write a haiku about local inference."
 OpenEye chat --message "Explain streaming tokens." --stream
 ```
 
-### Start TCP Server
+### Start Server
 ```bash
+# Start HTTP server (default)
 OpenEye serve
+
+# Start TCP server
+OpenEye serve --type tcp
 ```
-The server logs incoming prompts and pushes responses back to clients over the RESP/ERR protocol.
+The HTTP server provides REST endpoints at `/health` and `/v1/chat` (default: http://localhost:8080).
+The TCP server uses a line-based protocol on port 42067.
 
 ### Inspect Memory
 ```bash
@@ -289,16 +301,22 @@ OpenEye memory --n 12
 
 ### Command Examples
 
-Prepare a bespoke configuration, launch the TCP server, and send a round-trip request from the bundled client:
+Prepare a bespoke configuration and launch the server:
 
 ```bash
 # 1. Export a custom configuration file path
 export APP_CONFIG=$PWD/openeye.yaml
 
-# 2. Start the TCP server in one terminal
+# 2. Start the HTTP server in one terminal
 OpenEye serve
 
-# 3. In another terminal, run the Go sample client
+# 3. In another terminal, make a request via curl
+curl -X POST http://localhost:8080/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello, OpenEye!"}'
+
+# Or use TCP mode with the bundled client
+OpenEye serve --type tcp
 go run ./cmd/examples/tcpclient
 ```
 
@@ -398,7 +416,7 @@ internal/
   pipeline/    High-level orchestration
   rag/         Retrieval helpers and vector index management
   runtime/     Backend registry and interfaces
-server/        TCP server implementation
+server/        HTTP and TCP server implementations
 rag_corpus/    Default on-disk knowledge base scanned by the retriever
 ```
 
