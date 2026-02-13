@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
+	"os"
 	"strings"
 
 	"OpenEye/internal/config"
@@ -110,13 +112,27 @@ func (p *Pipeline) processImages(ctx context.Context, inputs []string) ([]string
 		var finalVal string
 		if img.Base64 != "" {
 			finalVal = img.Base64
+		} else if img.Data != nil {
+			tmpFile, err := os.CreateTemp("", "openeye-vision-*.jpg")
+			if err != nil {
+				log.Printf("warning: failed to create temp image file: %v", err)
+				finalVal = toProcess[i]
+			} else {
+				if _, err := tmpFile.Write(img.Data); err != nil {
+					log.Printf("warning: failed to write temp image: %v", err)
+					os.Remove(tmpFile.Name())
+					finalVal = toProcess[i]
+				} else {
+					tmpFile.Close()
+					finalVal = tmpFile.Name()
+				}
+			}
 		} else if img.OriginalPath != "" {
 			finalVal = img.OriginalPath
 		}
 
 		if finalVal != "" {
 			results[idx] = finalVal
-			// Cache it
 			hasher := sha256.New()
 			hasher.Write([]byte(toProcess[i]))
 			key := hex.EncodeToString(hasher.Sum(nil))

@@ -777,6 +777,32 @@ func merge(base, override Config) Config {
 		result.Runtime.Native.ContextShift = override.Runtime.Native.ContextShift
 	}
 
+	// Merge Image configuration
+	if override.Image.Enabled {
+		result.Image.Enabled = override.Image.Enabled
+	}
+	if override.Image.MaxWidth != 0 {
+		result.Image.MaxWidth = override.Image.MaxWidth
+	}
+	if override.Image.MaxHeight != 0 {
+		result.Image.MaxHeight = override.Image.MaxHeight
+	}
+	if override.Image.OutputFormat != "" {
+		result.Image.OutputFormat = override.Image.OutputFormat
+	}
+	if override.Image.Quality != 0 {
+		result.Image.Quality = override.Image.Quality
+	}
+	if override.Image.PreserveAspectRatio {
+		result.Image.PreserveAspectRatio = override.Image.PreserveAspectRatio
+	}
+	if override.Image.AutoDetectInput {
+		result.Image.AutoDetectInput = override.Image.AutoDetectInput
+	}
+	if override.Image.OutputAsBase64 {
+		result.Image.OutputAsBase64 = override.Image.OutputAsBase64
+	}
+
 	d := override.Runtime.Defaults
 	if d.MaxTokens != 0 {
 		result.Runtime.Defaults.MaxTokens = d.MaxTokens
