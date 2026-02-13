@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ type TCPServer struct {
 
 // Message represents a single inbound payload with facilities to respond.
 type Message struct {
+	Ctx     context.Context
 	Content string
 	Images  []string // Base64-encoded images or file paths
 	respond func(responsePayload) error
@@ -119,9 +121,15 @@ func (s *TCPServer) handleConnection(conn net.Conn) {
 
 		replyCh := make(chan responsePayload, 1)
 		done := make(chan struct{})
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-done
+			cancel()
+		}()
 		var response responsePayload
 
 		inbound := Message{
+			Ctx: ctx,
 			stream: func(token string) error {
 				select {
 				case <-done:

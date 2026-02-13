@@ -2,6 +2,7 @@ package subcommands
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -17,6 +18,34 @@ import (
 	"OpenEye/internal/runtime"
 	"OpenEye/server"
 )
+
+const maxRetries = 3
+
+func respondWithRetry(pipe *pipeline.Pipeline, content string, images []string, opts pipeline.Options) (pipeline.Result, error) {
+	ctx := context.Background()
+	result, err := pipe.Respond(ctx, content, images, opts)
+	if err == nil {
+		return result, nil
+	}
+
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		return result, err
+	}
+
+	for attempt := 1; attempt < maxRetries; attempt++ {
+		log.Printf("retrying after context canceled (attempt %d/%d)", attempt+1, maxRetries)
+		ctx := context.Background()
+		result, err = pipe.Respond(ctx, content, images, opts)
+		if err == nil {
+			return result, nil
+		}
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			return result, err
+		}
+	}
+
+	return result, err
+}
 
 // RunServe starts the server and processes inbound prompts through the runtime.
 // Supports both HTTP and TCP server types based on configuration.
@@ -161,7 +190,7 @@ func runHTTPServer(ctx context.Context, host string, port int, backend string, p
 				opts.GenerationHints.RepeatLastN = int(repeatLastN)
 			}
 
-			result, runErr := pipe.Respond(context.Background(), inbound.Content, images, opts)
+			result, runErr := respondWithRetry(pipe, inbound.Content, images, opts)
 			if runErr != nil {
 				log.Printf("runtime error: %v", runErr)
 				if respErr := inbound.RespondError(runErr); respErr != nil {
@@ -226,7 +255,7 @@ func runTCPServer(ctx context.Context, host string, port int, pipe *pipeline.Pip
 				},
 			}
 
-			result, runErr := pipe.Respond(context.Background(), inbound.Content, images, opts)
+			result, runErr := respondWithRetry(pipe, inbound.Content, images, opts)
 			if runErr != nil {
 				log.Printf("runtime error: %v", runErr)
 				if respErr := inbound.RespondError(runErr); respErr != nil {

@@ -49,6 +49,7 @@ type HTTPServer struct {
 
 // HTTPMessage represents a single HTTP request with facilities to respond
 type HTTPMessage struct {
+	Ctx             context.Context
 	Content         string
 	Images          []string
 	Stream          bool
@@ -185,6 +186,7 @@ func (s *HTTPServer) handleNonStreaming(w http.ResponseWriter, r *http.Request, 
 	replyCh := make(chan ChatResponse, 1)
 
 	msg := HTTPMessage{
+		Ctx:             r.Context(),
 		Content:         req.Message,
 		Images:          images,
 		Stream:          false,
@@ -226,6 +228,7 @@ func (s *HTTPServer) handleStreaming(w http.ResponseWriter, r *http.Request, req
 	streamCh := make(chan string, 100)
 
 	msg := HTTPMessage{
+		Ctx:             r.Context(),
 		Content:         req.Message,
 		Images:          images,
 		Stream:          true,
