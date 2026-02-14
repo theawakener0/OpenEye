@@ -21,8 +21,33 @@ import (
 	"OpenEye/internal/config"
 	"OpenEye/internal/embedding"
 
+	"container/heap"
 	pdf "github.com/ledongthuc/pdf"
 )
+
+type scoredResult struct {
+	chunk vectorChunk
+	score float64
+	index int
+}
+
+type minHeap []scoredResult
+
+func (h minHeap) Len() int           { return len(h) }
+func (h minHeap) Less(i, j int) bool { return h[i].score < h[j].score }
+func (h minHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+func (h *minHeap) Push(x any) {
+	*h = append(*h, x.(scoredResult))
+}
+
+func (h *minHeap) Pop() any {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[0 : n-1]
+	return item
+}
 
 // Document represents a single piece of retrieved knowledge.
 type Document struct {
@@ -61,10 +86,13 @@ var defaultRAGExtensions = []string{
 
 // FilesystemRetriever performs document retrieval over local files using semantic embeddings.
 type FilesystemRetriever struct {
-	chunks   []vectorChunk
-	minScore float64
-	mu       sync.RWMutex
-	embedder embedding.Provider
+	chunks              []vectorChunk
+	minScore            float64
+	earlyTermination    bool
+	earlyTermMultiplier float64
+	earlyTermMinChunks  int
+	mu                  sync.RWMutex
+	embedder            embedding.Provider
 }
 
 // NewFilesystemRetriever builds a retriever that indexes plain-text files on disk into a lightweight vector store.
@@ -96,9 +124,21 @@ func NewFilesystemRetriever(cfg config.RAGConfig, embedder embedding.Provider) (
 		overlap = 0
 	}
 
-	retriever := &FilesystemRetriever{minScore: cfg.MinScore, embedder: embedder}
+	retriever := &FilesystemRetriever{
+		minScore:            cfg.MinScore,
+		embedder:            embedder,
+		earlyTermination:    cfg.EarlyTermination,
+		earlyTermMultiplier: cfg.EarlyTermMultiplier,
+		earlyTermMinChunks:  cfg.EarlyTermMinChunks,
+	}
 	if retriever.minScore <= 0 {
 		retriever.minScore = 0.2
+	}
+	if retriever.earlyTermMultiplier <= 0 {
+		retriever.earlyTermMultiplier = 3.0
+	}
+	if retriever.earlyTermMinChunks <= 0 {
+		retriever.earlyTermMinChunks = 500
 	}
 
 	allowedExt := normalizeExtensions(cfg.Extensions)
@@ -165,24 +205,63 @@ func (r *FilesystemRetriever) Retrieve(ctx context.Context, query string, limit 
 	}
 	normalizeVector(queryVec)
 
-	type scored struct {
-		chunk vectorChunk
-		score float64
+	useEarlyTermination := r.earlyTermination && len(chunks) >= r.earlyTermMinChunks
+	targetResults := limit
+	if useEarlyTermination {
+		targetResults = int(float64(limit) * r.earlyTermMultiplier)
+		if targetResults < limit*2 {
+			targetResults = limit * 2
+		}
 	}
 
-	results := make([]scored, 0, limit*2)
-	for _, chunk := range chunks {
+	h := &minHeap{}
+	heap.Init(h)
+	worstScore := 0.0
+	processed := 0
+	batchSize := 100
+
+	for i, chunk := range chunks {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		if len(chunk.vector) == 0 {
 			continue
 		}
+		processed++
+
 		score := cosineSimilarity(queryVec, chunk.vector)
 		if score < r.minScore {
 			continue
 		}
-		results = append(results, scored{chunk: chunk, score: score})
+
+		if useEarlyTermination && h.Len() >= targetResults && score <= worstScore {
+			continue
+		}
+
+		heap.Push(h, scoredResult{chunk: chunk, score: score, index: i})
+
+		if useEarlyTermination && h.Len() > targetResults {
+			heap.Pop(h)
+		}
+
+		if h.Len() > 0 {
+			worstScore = (*h)[0].score
+		}
+
+		if useEarlyTermination && processed >= r.earlyTermMinChunks && h.Len() >= targetResults {
+			remaining := len(chunks) - processed
+			maxPossibleScore := 1.0
+			potentialBest := worstScore + float64(remaining)*maxPossibleScore*0.001
+			if processed%batchSize == 0 && potentialBest <= worstScore*1.1 {
+				log.Printf("rag: early termination at chunk %d/%d (results: %d, worst: %.3f)", processed, len(chunks), h.Len(), worstScore)
+				break
+			}
+		}
+	}
+
+	results := make([]scoredResult, h.Len())
+	for i := h.Len() - 1; i >= 0; i-- {
+		results[i] = heap.Pop(h).(scoredResult)
 	}
 
 	sort.Slice(results, func(i, j int) bool {

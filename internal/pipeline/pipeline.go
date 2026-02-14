@@ -113,6 +113,11 @@ func New(cfg config.Config, registry runtime.Registry) (*Pipeline, error) {
 			log.Printf("warning: failed to initialize omem: %v", err)
 			// Non-fatal, continue without omem
 		} else {
+			// Wire external RAG to Omem if enabled in config
+			if cfg.Memory.Omem.ExternalRAG.Enabled && retriever != nil {
+				omemAdapter.SetExternalRAG(retriever)
+				log.Printf("omem external RAG enabled (corpus: %s)", cfg.Memory.Omem.ExternalRAG.CorpusPath)
+			}
 			omemHook = omem.NewPipelineHook(omemAdapter)
 			log.Println("omem long-term memory initialized")
 		}

@@ -9,6 +9,7 @@ import (
 
 	"OpenEye/internal/config"
 	"OpenEye/internal/embedding"
+	"OpenEye/internal/rag"
 	"OpenEye/internal/runtime"
 )
 
@@ -16,7 +17,8 @@ import (
 // It provides a simpler interface for common operations and handles
 // the conversion between pipeline types and omem internal types.
 type Adapter struct {
-	engine *Engine
+	engine      *Engine
+	externalRAG rag.Retriever
 }
 
 // NewAdapterFromConfig creates a new omem adapter from the external config.OmemConfig.
@@ -345,6 +347,21 @@ func (a *Adapter) Close() error {
 		return nil
 	}
 	return a.engine.Close()
+}
+
+// SetExternalRAG sets the external RAG retriever for knowledge retrieval.
+// When set, Omem will use the external RAG system as a knowledge source
+// instead of or in addition to its internal storage.
+func (a *Adapter) SetExternalRAG(retriever rag.Retriever) {
+	a.externalRAG = retriever
+	if a.engine != nil {
+		a.engine.SetExternalRAG(retriever)
+	}
+}
+
+// IsExternalRAGEnabled returns whether external RAG is configured.
+func (a *Adapter) IsExternalRAGEnabled() bool {
+	return a.externalRAG != nil
 }
 
 // FormatMemoryForPrompt formats memory context with a header for prompt inclusion.

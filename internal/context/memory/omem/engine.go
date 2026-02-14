@@ -2,9 +2,12 @@ package omem
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
+
+	"OpenEye/internal/rag"
 )
 
 // Engine is the main orchestrator for the Omem memory system.
@@ -16,6 +19,7 @@ import (
 // - RollingSummaryManager: incremental summary updates
 // - EpisodeManager: session/episode tracking
 // - ParallelProcessor: efficient batch processing
+// - ExternalRAG: optional external knowledge base integration
 type Engine struct {
 	config Config
 	mu     sync.RWMutex
@@ -29,6 +33,9 @@ type Engine struct {
 	summary   *RollingSummaryManager
 	episodes  *EpisodeManager
 	processor *ParallelProcessor
+
+	// External RAG for knowledge retrieval
+	externalRAG rag.Retriever
 
 	// LLM functions (configurable)
 	llmGenerate   func(ctx context.Context, prompt string) (string, error)
@@ -276,6 +283,7 @@ func (e *Engine) ProcessText(ctx context.Context, text string, role string) (*Pr
 
 // GetContextForPrompt retrieves relevant memory context for a prompt.
 // This is the main read path for the memory system.
+// When external RAG is enabled, it will also retrieve knowledge from the external corpus.
 func (e *Engine) GetContextForPrompt(ctx context.Context, prompt string, maxTokens int) (*ContextResult, error) {
 	if !e.isReady() {
 		return nil, ErrNotInitialized
@@ -286,7 +294,10 @@ func (e *Engine) GetContextForPrompt(ctx context.Context, prompt string, maxToke
 		RetrievedAt: time.Now(),
 	}
 
-	// Step 1: Retrieve relevant facts
+	// Check if external RAG is available
+	useExternalRAG := e.externalRAG != nil
+
+	// Step 1: Retrieve relevant facts from internal storage
 	if e.retriever != nil {
 		retrieval, err := e.retriever.Retrieve(ctx, RetrievalRequest{
 			Query:       prompt,
@@ -300,6 +311,18 @@ func (e *Engine) GetContextForPrompt(ctx context.Context, prompt string, maxToke
 		}
 	}
 
+	// Step 1b: Retrieve from external RAG if enabled
+	if useExternalRAG {
+		externalDocs, err := e.externalRAG.Retrieve(ctx, prompt, 5)
+		if err == nil && len(externalDocs) > 0 {
+			result.ExternalKnowledge = make([]string, 0, len(externalDocs))
+			for _, doc := range externalDocs {
+				result.ExternalKnowledge = append(result.ExternalKnowledge,
+					fmt.Sprintf("[%s] %s", doc.Source, doc.Text))
+			}
+		}
+	}
+
 	// Step 2: Get rolling summary
 	if e.summary != nil {
 		summaryText := e.summary.GetSummaryText(ctx)
@@ -307,7 +330,7 @@ func (e *Engine) GetContextForPrompt(ctx context.Context, prompt string, maxToke
 	}
 
 	// Step 3: Format context
-	result.FormattedContext = e.formatContext(result)
+	result.FormattedContext = e.formatContextWithExternal(result)
 	result.TokenEstimate = e.estimateTokens(result.FormattedContext)
 
 	return result, nil
@@ -335,6 +358,42 @@ func (e *Engine) formatContext(result *ContextResult) string {
 		sb.WriteString("User Summary:\n")
 		sb.WriteString(result.Summary)
 		sb.WriteString("\n\n")
+	}
+
+	// Add relevant facts
+	if len(result.Facts) > 0 {
+		sb.WriteString("Relevant Memories:\n")
+		for _, sf := range result.Facts {
+			sb.WriteString("- ")
+			sb.WriteString(sf.Fact.AtomicText)
+			sb.WriteString("\n")
+		}
+	}
+
+	return strings.TrimSpace(sb.String())
+}
+
+// formatContextWithExternal formats the retrieval results into a context string,
+// including external RAG knowledge if available.
+func (e *Engine) formatContextWithExternal(result *ContextResult) string {
+	var sb strings.Builder
+
+	// Add summary if available
+	if result.Summary != "" {
+		sb.WriteString("User Summary:\n")
+		sb.WriteString(result.Summary)
+		sb.WriteString("\n\n")
+	}
+
+	// Add external knowledge first (higher priority for factual information)
+	if len(result.ExternalKnowledge) > 0 {
+		sb.WriteString("Knowledge Base:\n")
+		for _, knowledge := range result.ExternalKnowledge {
+			sb.WriteString("- ")
+			sb.WriteString(knowledge)
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
 	}
 
 	// Add relevant facts
@@ -507,6 +566,27 @@ func (e *Engine) isReady() bool {
 	return e.initialized
 }
 
+// SetExternalRAG sets the external RAG retriever for knowledge retrieval.
+// When set, Omem can use the external RAG system as a knowledge source.
+func (e *Engine) SetExternalRAG(retriever rag.Retriever) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.externalRAG = retriever
+}
+
+// IsExternalRAGEnabled returns whether external RAG is configured.
+func (e *Engine) IsExternalRAGEnabled() bool {
+	if e == nil {
+		return false
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.externalRAG != nil
+}
+
 // ============================================================================
 // Result Types
 // ============================================================================
@@ -521,14 +601,15 @@ type ProcessingResult struct {
 
 // ContextResult contains retrieved memory context.
 type ContextResult struct {
-	Query            string           // Original query
-	Facts            []ScoredFact     // Retrieved facts with scores
-	Summary          string           // Rolling summary
-	Complexity       ComplexityResult // Query complexity analysis
-	QueryType        QueryType        // Classified query type
-	FormattedContext string           // Formatted context for prompt
-	TokenEstimate    int              // Estimated tokens
-	RetrievedAt      time.Time        // Retrieval timestamp
+	Query             string           // Original query
+	Facts             []ScoredFact     // Retrieved facts with scores
+	Summary           string           // Rolling summary
+	Complexity        ComplexityResult // Query complexity analysis
+	QueryType         QueryType        // Classified query type
+	ExternalKnowledge []string         // Knowledge from external RAG
+	FormattedContext  string           // Formatted context for prompt
+	TokenEstimate     int              // Estimated tokens
+	RetrievedAt       time.Time        // Retrieval timestamp
 }
 
 // ============================================================================

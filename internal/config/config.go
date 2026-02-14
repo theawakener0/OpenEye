@@ -178,6 +178,9 @@ type OmemConfig struct {
 
 	// Parallel processing
 	Parallel OmemParallelConfig `yaml:"parallel"`
+
+	// External RAG integration for knowledge retrieval
+	ExternalRAG OmemExternalRAGConfig `yaml:"external_rag"`
 }
 
 // OmemStorageConfig configures Omem DuckDB storage.
@@ -262,6 +265,16 @@ type OmemParallelConfig struct {
 	BatchSize   int  `yaml:"batch_size"`
 	QueueSize   int  `yaml:"queue_size"`
 	EnableAsync bool `yaml:"enable_async"`
+}
+
+// OmemExternalRAGConfig configures external RAG integration for Omem.
+// When enabled, Omem will use the external RAG system as a knowledge source
+// instead of (or in addition to) its internal DuckDB storage.
+type OmemExternalRAGConfig struct {
+	Enabled            bool   `yaml:"enabled"`
+	CorpusPath         string `yaml:"corpus_path"`
+	UseAsPrimary       bool   `yaml:"use_as_primary"`
+	FallbackToInternal bool   `yaml:"fallback_to_internal"`
 }
 
 // Mem0Config configures the mem0-style intelligent memory system.
@@ -371,6 +384,11 @@ type RAGConfig struct {
 	DedupeThreshold      float64 `yaml:"dedupe_threshold"`
 	MergeAdjacentChunks  bool    `yaml:"merge_adjacent_chunks"`
 	MaxMergedTokens      int     `yaml:"max_merged_tokens"`
+
+	// Early termination settings for large corpora
+	EarlyTermination    bool    `yaml:"early_termination"`
+	EarlyTermMultiplier float64 `yaml:"early_term_multiplier"`
+	EarlyTermMinChunks  int     `yaml:"early_term_min_chunks"`
 }
 
 // AssistantsConfig groups secondary helper models invoked by the pipeline.
@@ -601,6 +619,11 @@ func Default() Config {
 					QueueSize:   100,
 					EnableAsync: true,
 				},
+				ExternalRAG: OmemExternalRAGConfig{
+					Enabled:            false,
+					UseAsPrimary:       false,
+					FallbackToInternal: true,
+				},
 			},
 		},
 		Server: ServerConfig{
@@ -629,6 +652,9 @@ func Default() Config {
 			DedupeThreshold:      0.85,
 			MergeAdjacentChunks:  true,
 			MaxMergedTokens:      1000,
+			EarlyTermination:     true,
+			EarlyTermMultiplier:  3.0,
+			EarlyTermMinChunks:   500,
 		},
 		Assistants: AssistantsConfig{
 			Summarizer: SummarizerConfig{
@@ -1056,6 +1082,24 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.Memory.TurnsToUse = n
 		}
 	}
+	if v := strings.TrimSpace(os.Getenv("APP_OMEM_EXTERNAL_RAG_ENABLED")); v != "" {
+		if enabled, err := strconv.ParseBool(v); err == nil {
+			cfg.Memory.Omem.ExternalRAG.Enabled = enabled
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("APP_OMEM_EXTERNAL_RAG_CORPUS")); v != "" {
+		cfg.Memory.Omem.ExternalRAG.CorpusPath = v
+	}
+	if v := strings.TrimSpace(os.Getenv("APP_OMEM_EXTERNAL_RAG_USE_PRIMARY")); v != "" {
+		if enabled, err := strconv.ParseBool(v); err == nil {
+			cfg.Memory.Omem.ExternalRAG.UseAsPrimary = enabled
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("APP_OMEM_EXTERNAL_RAG_FALLBACK")); v != "" {
+		if enabled, err := strconv.ParseBool(v); err == nil {
+			cfg.Memory.Omem.ExternalRAG.FallbackToInternal = enabled
+		}
+	}
 	if v := strings.TrimSpace(os.Getenv("APP_SYSMSG")); v != "" {
 		cfg.Conversation.SystemMessage = v
 	}
@@ -1121,6 +1165,21 @@ func applyEnvOverrides(cfg *Config) {
 				trimmed = "." + trimmed
 			}
 			cfg.RAG.Extensions = append(cfg.RAG.Extensions, strings.ToLower(trimmed))
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("APP_RAG_EARLY_TERMINATION")); v != "" {
+		if enabled, err := strconv.ParseBool(v); err == nil {
+			cfg.RAG.EarlyTermination = enabled
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("APP_RAG_EARLY_TERM_MULTIPLIER")); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			cfg.RAG.EarlyTermMultiplier = f
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("APP_RAG_EARLY_TERM_MIN_CHUNKS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.RAG.EarlyTermMinChunks = n
 		}
 	}
 	if v := strings.TrimSpace(os.Getenv("APP_SUMMARY_ENABLED")); v != "" {
@@ -1497,6 +1556,20 @@ func mergeOmemConfig(base, override OmemConfig) OmemConfig {
 	}
 	if override.Parallel.EnableAsync {
 		result.Parallel.EnableAsync = true
+	}
+
+	// ExternalRAG
+	if override.ExternalRAG.Enabled {
+		result.ExternalRAG.Enabled = true
+	}
+	if override.ExternalRAG.CorpusPath != "" {
+		result.ExternalRAG.CorpusPath = override.ExternalRAG.CorpusPath
+	}
+	if override.ExternalRAG.UseAsPrimary {
+		result.ExternalRAG.UseAsPrimary = true
+	}
+	if override.ExternalRAG.FallbackToInternal {
+		result.ExternalRAG.FallbackToInternal = true
 	}
 
 	return result

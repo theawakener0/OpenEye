@@ -232,6 +232,14 @@ memory:
       batch_size: 10                       # Batch size for bulk operations
       queue_size: 100                      # Async processing queue size
       enable_async: true                   # Enable background processing
+    
+    # External RAG Integration
+    # Use external RAG system as knowledge source (fast for large corpuses)
+    external_rag:
+      enabled: false                      # Enable external RAG integration
+      corpus_path: ""                     # Uses RAG corpus_path if empty
+      use_as_primary: false              # Use RAG instead of internal storage
+      fallback_to_internal: true          # Fall back to internal if RAG returns nothing
 
 server:
   # SECURITY: Use 127.0.0.1 (loopback) to restrict to local connections only.
@@ -246,7 +254,7 @@ conversation:
 
 rag:
   enabled: false
-  corpus_path: "./rag_corpus"
+  corpus_path: "/home/theawakener/Projects/OpenEye_00/rag_corpus"
   max_chunks: 4
   chunk_size: 512
   chunk_overlap: 64
@@ -265,6 +273,11 @@ rag:
   dedupe_threshold: 0.85                # Similarity threshold for deduplication
   merge_adjacent_chunks: true           # Merge adjacent chunks from same source
   max_merged_tokens: 1000               # Max tokens when merging chunks
+  
+  # Early Termination (optimization for large corpora)
+  early_termination: true               # Enable early termination for large corpuses
+  early_term_multiplier: 3.0           # Multiplier for target results (K * multiplier)
+  early_term_min_chunks: 500           # Minimum chunks before early termination kicks in
 
 assistants:
   summarizer:
