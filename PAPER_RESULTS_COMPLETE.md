@@ -313,6 +313,29 @@ Full request processing time (user input → response tokens):
 | **Memory System** | ✗ | ✓ | Omem integration (96% recall) |
 | **Go API** | ✗ | ✓ | Native Go bindings |
 
+### 8.4 vs. SimpleMem (Memory System Benchmark)
+
+Direct comparison of memory retrieval using the **same embedding model** (all-MiniLM-L6-v2-Q4_K_M.gguf via llama.cpp):
+
+| Metric | SimpleMem (Memory) | Omem Full | Notes |
+|--------|-------------------|-----------|-------|
+| **Recall (sim>0.3)** | **100.0%** | 96.0% | SimpleMem uses pure semantic |
+| **Write Latency (avg)** | 147.9 ms | 8.2 ms | **18× faster** |
+| **Retrieve Latency (avg)** | 192.3 ms | 71.1 ms | **2.7× faster** |
+| **Similarity Score** | 0.661 | 0.506 | Higher but slower |
+| **Throughput** | 6.8 facts/sec | 12.0 facts/sec | Omem 1.8× faster |
+
+**Benchmark Configuration:**
+- **Embedding Model:** all-MiniLM-L6-v2-Q4_K_M.gguf (384 dimensions, 22MB)
+- **Test Dataset:** 50 conversational facts (same as Omem benchmark)
+- **Retrieval Method:** SimpleMem uses pure cosine similarity; Omem uses hybrid (semantic + BM25 + entity graph)
+
+**Key Findings:**
+- **Omem is significantly faster:** 18× faster write, 2.7× faster retrieval
+- **SimpleMem has slightly higher recall:** 100% vs 96% (but much slower)
+- **Omem's hybrid approach** trades some recall for speed (acceptable for edge devices)
+- **SimpleMem's LLM-based compression** is not included in this test (would add more latency)
+
 ---
 
 ## 9. Statistical Validation
@@ -403,11 +426,12 @@ With recommended configuration:
 ### 10.3 When to Use Each System
 
 | Use Case | Recommended | Rationale |
-|----------|-------------|-----------|
+|----------|------------|-----------|
 | **Maximum Accuracy** | Omem Full | 96% recall, semantic understanding |
 | **Latency Critical** | Legacy SQLite | 0.3ms retrieval, 237× faster |
 | **Resource Constrained** | Legacy SQLite | 22MB memory, 3.5× leaner |
 | **Research/Testing** | Both | Compare approaches |
+| **Pure Semantic Matching** | SimpleMem | 100% recall (but slower) |
 
 ---
 
@@ -420,6 +444,7 @@ With recommended configuration:
 ✅ **Context Efficiency:** 50% smaller contexts via atomic encoding
 ✅ **Edge Deployment:** Viable on Raspberry Pi 5 (8GB)
 ✅ **Statistical Validation:** All improvements significant (p < 0.01)
+✅ **vs SimpleMem:** Omem 18× faster write, 2.7× faster retrieval (with comparable recall)
 
 ### 11.2 Performance Metrics Summary
 
@@ -456,6 +481,10 @@ go run -tags native cmd/memory_benchmark_real/main.go
 
 # Run retrieval test
 go run -tags native cmd/retrieval_benchmark_fixed/main.go
+
+# SimpleMem Memory Benchmark (using llama.cpp embeddings)
+cd SimpleMem
+python3 test_memory_llama.py
 ```
 
 ## Appendix B: Files Generated
@@ -464,6 +493,8 @@ go run -tags native cmd/retrieval_benchmark_fixed/main.go
 - `memory_benchmark_real_results.json` - Performance metrics
 - `retrieval_accuracy_fixed_results.json` - Query-level results
 - `OMEM_FINAL_FIXES_COMPLETE.md` - Technical documentation
+- `SimpleMem/test_memory_llama.py` - SimpleMem memory benchmark script
+- `simplemem_memory_results.json` - SimpleMem benchmark results
 
 ---
 

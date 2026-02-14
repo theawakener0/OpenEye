@@ -16,9 +16,9 @@
     "correct": 48,
     "accuracy_pct": 96,
     "top3_accuracy_pct": 98,
-    "avg_latency_ms": 71.12,
-    "min_score": 0.3756064037192597,
-    "max_score": 0.6157391736253675,
-    "avg_score": 0.5055510958192102
+    "avg_latency_ms": 94,
+    "min_score": 0.3756060806805284,
+    "max_score": 0.6157386778770626,
+    "avg_score": 0.5055501460623963
   }
 ]
