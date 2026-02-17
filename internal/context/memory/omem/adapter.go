@@ -228,15 +228,20 @@ func (a *Adapter) ProcessTurnAsync(userMessage, assistantResponse string, turnID
 		return nil
 	}
 
-	// Process in a goroutine
+	// Process in a goroutine with timeout to prevent indefinite blocking
 	go func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
 		turns := []ConversationTurn{
 			{Role: "user", Content: userMessage, TurnID: turnID + "_user"},
 			{Role: "assistant", Content: assistantResponse, TurnID: turnID + "_assistant"},
 		}
 
 		_, err := a.engine.ProcessConversation(ctx, turns)
+		if err != nil {
+			log.Printf("omem: ProcessTurnAsync failed: %v", err)
+		}
 		if callback != nil {
 			callback(err)
 		}
@@ -408,9 +413,12 @@ func (h *PipelineHook) OnAfterGenerate(ctx context.Context, userMessage, assista
 	}
 
 	// Process asynchronously to not block the response
+	log.Printf("omem: starting async processing for turn %s", turnID)
 	_ = h.adapter.ProcessTurnAsync(userMessage, assistantResponse, turnID, func(err error) {
 		if err != nil {
-			log.Printf("warning: omem async processing failed: %v", err)
+			log.Printf("omem: async processing failed for turn %s: %v", turnID, err)
+		} else {
+			log.Printf("omem: async processing completed for turn %s", turnID)
 		}
 	})
 }

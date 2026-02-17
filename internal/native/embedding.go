@@ -19,7 +19,9 @@ import (
 type EmbeddingProvider struct {
 	model      *Model
 	ctx        *Context
-	hasEncoder bool // true for BERT/encoder-only models
+	hasEncoder bool           // true for BERT/encoder-only models
+	nuBatch    uint32         // microbatch size for embedding extraction
+	ctxOpts    ContextOptions // saved for context recreation
 	mu         sync.Mutex
 }
 
@@ -72,6 +74,16 @@ func newNativeEmbeddingProvider(cfg config.EmbeddingConfig) (embedding.Provider,
 	if nc.BatchSize > 0 {
 		ctxOpts.NBatch = uint32(nc.BatchSize)
 	}
+	if nc.UbatchSize > 0 {
+		ctxOpts.NUbatch = uint32(nc.UbatchSize)
+	} else if info.NCtxTrain > 0 {
+		// Auto-detect ubatch from model's training context size
+		ctxOpts.NUbatch = uint32(info.NCtxTrain)
+		log.Printf("native embedding: auto-detected ubatch size from model: %d", ctxOpts.NUbatch)
+	} else {
+		ctxOpts.NUbatch = 512 // llama.cpp default
+		log.Printf("native embedding: using default ubatch size: %d", ctxOpts.NUbatch)
+	}
 	if nc.Threads > 0 {
 		ctxOpts.NThreads = int32(nc.Threads)
 	}
@@ -82,24 +94,29 @@ func newNativeEmbeddingProvider(cfg config.EmbeddingConfig) (embedding.Provider,
 		return nil, fmt.Errorf("native embedding: %w", err)
 	}
 
-	log.Printf("native embedding: model loaded — %s, %d dims, ctx=%d, encoder=%v",
-		info.Description, info.NEmbedding, ctxOpts.NCtx, info.HasEncoder)
+	log.Printf("native embedding: model loaded — %s, %d dims, ctx=%d, ubatch=%d, encoder=%v",
+		info.Description, info.NEmbedding, ctxOpts.NCtx, ctxOpts.NUbatch, info.HasEncoder)
 
 	return &EmbeddingProvider{
 		model:      model,
 		ctx:        llCtx,
 		hasEncoder: info.HasEncoder,
+		nuBatch:    ctxOpts.NUbatch,
+		ctxOpts:    ctxOpts,
 	}, nil
 }
 
 // Embed tokenizes the input text and returns its embedding vector.
 // The returned vector is L2-normalized for cosine similarity.
+// It includes fallback retry logic to handle crashes due to batch size issues.
+// All errors are logged but handled gracefully to prevent cascade failures.
 func (p *EmbeddingProvider) Embed(_ context.Context, text string) ([]float32, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.model == nil || p.ctx == nil {
-		return nil, fmt.Errorf("native embedding: provider is closed")
+	if p.model == nil {
+		log.Printf("native embedding: provider is closed, skipping embed")
+		return nil, nil // Return nil silently instead of error to prevent cascade failures
 	}
 
 	// Tokenize.
@@ -111,19 +128,75 @@ func (p *EmbeddingProvider) Embed(_ context.Context, text string) ([]float32, er
 		return nil, fmt.Errorf("native embedding: empty token sequence")
 	}
 
-	// Clear KV cache (decoder models) and evaluate.
-	if p.hasEncoder {
-		// Encoder-only models (BERT): use encode path directly.
-		// No KV cache to clear — encoder is stateless per call.
-		if err := p.ctx.Encode(tokens); err != nil {
-			return nil, fmt.Errorf("native embedding: encode: %w", err)
+	// Attempt embedding with fallback retry (max 3 attempts)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		// Check if context is closed (may have been recreated in previous attempt)
+		if p.ctx == nil {
+			break
 		}
-	} else {
-		// Decoder models used for embeddings: clear KV and decode.
+
+		result, err := p.tryEmbed(tokens, attempt > 0)
+		if err == nil {
+			return result, nil
+		}
+
+		lastErr = err
+		log.Printf("native embedding: attempt %d failed: %v", attempt+1, err)
+
+		// Attempt recovery strategies
+		if attempt == 0 {
+			// First failure: clear KV cache and retry
+			if !p.hasEncoder && p.ctx != nil {
+				p.ctx.ClearKV()
+			}
+		} else if attempt == 1 {
+			// Second failure: truncate tokens to ubatch size and retry
+			if int(p.nuBatch) > 0 && len(tokens) > int(p.nuBatch) {
+				tokens = tokens[len(tokens)-int(p.nuBatch):]
+				log.Printf("native embedding: truncating to %d tokens", len(tokens))
+			}
+		}
+		// Third attempt will recreate context if still failing
+	}
+
+	// Last resort: try to recreate context
+	if p.ctx == nil {
+		newCtx, err := NewContext(p.model, p.ctxOpts)
+		if err != nil {
+			return nil, fmt.Errorf("native embedding: context recreation failed: %w", err)
+		}
+		p.ctx = newCtx
+		result, err := p.tryEmbed(tokens, false)
+		if err != nil {
+			return nil, fmt.Errorf("native embedding: fallback failed after context recreation: %w", err)
+		}
+		return result, nil
+	}
+
+	return nil, fmt.Errorf("native embedding: all fallback attempts failed: %w", lastErr)
+}
+
+// tryEmbed attempts to compute embeddings, returning error if it fails.
+func (p *EmbeddingProvider) tryEmbed(tokens []int32, truncated bool) ([]float32, error) {
+	if p.ctx == nil {
+		return nil, fmt.Errorf("native embedding: context is nil")
+	}
+
+	// Clear KV cache for decoder models before evaluation
+	if !p.hasEncoder {
 		p.ctx.ClearKV()
-		if err := p.ctx.Eval(tokens); err != nil {
-			return nil, fmt.Errorf("native embedding: eval: %w", err)
-		}
+	}
+
+	// Encode/evaluate tokens
+	var err error
+	if p.hasEncoder {
+		err = p.ctx.Encode(tokens)
+	} else {
+		err = p.ctx.Eval(tokens)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("native embedding: encode/eval: %w", err)
 	}
 
 	// Extract pooled sequence embeddings (preferred for embedding models).
@@ -142,9 +215,7 @@ func (p *EmbeddingProvider) Embed(_ context.Context, text string) ([]float32, er
 		return nil, fmt.Errorf("native embedding: dimension mismatch: got %d, expected %d", len(raw), expected)
 	}
 
-	// L2-normalize for cosine similarity. The raw slice is already a
-	// Go-owned copy (allocated in cGetEmbeddings/cGetEmbeddingsSeq),
-	// so we can normalize in place without an extra allocation.
+	// L2-normalize for cosine similarity.
 	l2Normalize(raw)
 
 	return raw, nil

@@ -25,7 +25,7 @@ OpenEye
 openeye
 openeye-native
 
-# rag_corpus/
+rag_corpus/
 
 # OS
 .DS_Store

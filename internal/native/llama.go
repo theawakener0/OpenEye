@@ -120,10 +120,10 @@ func cModelGetInfo(m C.oe_model_t) ModelInfo {
 // ---------------------------------------------------------------------------
 
 // cContextNew creates an inference context.
-func cContextNew(m C.oe_model_t, nCtx, nBatch uint32,
+func cContextNew(m C.oe_model_t, nCtx, nBatch, nUbatch uint32,
 	nThreads, nThreadsBatch int32, embeddings bool, flashAttn int32,
 	typeK, typeV int32) C.oe_context_t {
-	return C.oe_context_new(m, C.uint32_t(nCtx), C.uint32_t(nBatch),
+	return C.oe_context_new(m, C.uint32_t(nCtx), C.uint32_t(nBatch), C.uint32_t(nUbatch),
 		C.int32_t(nThreads), C.int32_t(nThreadsBatch),
 		C.bool(embeddings), C.int32_t(flashAttn),
 		C.int32_t(typeK), C.int32_t(typeV))

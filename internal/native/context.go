@@ -8,6 +8,7 @@ package native
 import "C"
 import (
 	"fmt"
+	"log"
 	"sync"
 )
 
@@ -32,6 +33,10 @@ type ContextOptions struct {
 
 	// NBatch is the max batch size for prompt processing.
 	NBatch uint32
+
+	// NUbatch is the microbatch size. 0 = use default (512).
+	// Must be >= n_tokens for embedding extraction.
+	NUbatch uint32
 
 	// NThreads is the number of threads for single-token generation.
 	// 0 = auto-detect.
@@ -70,7 +75,16 @@ func NewContext(model *Model, opts ContextOptions) (*Context, error) {
 		return nil, fmt.Errorf("native: model is nil or closed")
 	}
 
-	handle := cContextNew(model.handle, opts.NCtx, opts.NBatch,
+	// Validate and adjust batch sizes for embedding mode.
+	// Embedding extraction requires all tokens in a single ubatch.
+	nBatch := opts.NBatch
+	nUbatch := opts.NUbatch
+	if opts.Embeddings && nBatch > 0 && nUbatch > 0 && nBatch > nUbatch {
+		log.Printf("native: embeddings enabled, clamping n_batch (%d) to n_ubatch (%d)", nBatch, nUbatch)
+		nBatch = nUbatch
+	}
+
+	handle := cContextNew(model.handle, opts.NCtx, nBatch, nUbatch,
 		opts.NThreads, opts.NThreadsBatch, opts.Embeddings, opts.FlashAttn,
 		opts.TypeK, opts.TypeV)
 	if handle == nil {

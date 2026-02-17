@@ -3,6 +3,7 @@ package omem
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,7 @@ type RollingSummaryManager struct {
 	currentSummary *RollingSummary
 	pendingFacts   []int64 // Fact IDs added since last summary update
 	isDirty        bool
+	isRefreshing   bool // Prevents concurrent refresh operations
 	lastRefresh    time.Time
 
 	// Background worker
@@ -342,9 +344,25 @@ func (rsm *RollingSummaryManager) backgroundWorker() {
 		case <-rsm.stopCh:
 			return
 		case <-ticker.C:
+			// Skip if already processing to prevent resource contention
+			rsm.mu.Lock()
+			if rsm.isRefreshing {
+				rsm.mu.Unlock()
+				continue
+			}
+			rsm.isRefreshing = true
+			rsm.mu.Unlock()
+
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			_ = rsm.Refresh(ctx)
+			err := rsm.Refresh(ctx)
+			if err != nil {
+				log.Printf("omem: background summary refresh failed: %v", err)
+			}
 			cancel()
+
+			rsm.mu.Lock()
+			rsm.isRefreshing = false
+			rsm.mu.Unlock()
 		}
 	}
 }

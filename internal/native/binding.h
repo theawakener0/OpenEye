@@ -83,7 +83,7 @@ oe_model_info_t oe_model_get_info(oe_model_t model);
 // flash_attn:   enable flash attention (-1=auto, 0=off, 1=on)
 // type_k:       KV cache key type (0=f16, 1=q8_0, 2=q4_0)
 // type_v:       KV cache value type (0=f16, 1=q8_0, 2=q4_0)
-oe_context_t oe_context_new(oe_model_t model, uint32_t n_ctx, uint32_t n_batch,
+oe_context_t oe_context_new(oe_model_t model, uint32_t n_ctx, uint32_t n_batch, uint32_t n_ubatch,
                              int32_t n_threads, int32_t n_threads_batch,
                              bool embeddings, int32_t flash_attn,
                              int32_t type_k, int32_t type_v);

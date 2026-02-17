@@ -74,7 +74,7 @@ oe_model_info_t oe_model_get_info(oe_model_t model) {
 // Context operations
 // ---------------------------------------------------------------------------
 
-oe_context_t oe_context_new(oe_model_t model, uint32_t n_ctx, uint32_t n_batch,
+oe_context_t oe_context_new(oe_model_t model, uint32_t n_ctx, uint32_t n_batch, uint32_t n_ubatch,
                              int32_t n_threads, int32_t n_threads_batch,
                              bool embeddings, int32_t flash_attn,
                              int32_t type_k, int32_t type_v) {
@@ -82,6 +82,7 @@ oe_context_t oe_context_new(oe_model_t model, uint32_t n_ctx, uint32_t n_batch,
 
     if (n_ctx > 0)        params.n_ctx          = n_ctx;
     if (n_batch > 0)      params.n_batch        = n_batch;
+    if (n_ubatch > 0)    params.n_ubatch       = n_ubatch;
     if (n_threads > 0)    params.n_threads       = n_threads;
     if (n_threads_batch > 0) params.n_threads_batch = n_threads_batch;
     else if (n_threads > 0)  params.n_threads_batch = n_threads;

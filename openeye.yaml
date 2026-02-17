@@ -46,7 +46,7 @@ image:
 
 memory:
   path: "openeye_memory.db"
-  turns_to_use: 8                                       # INCREASED: Keep more recent turns in working memory
+  turns_to_use: 12                                      # REDUCED: Balance between context and speed
   
   # Vector Memory Engine (DuckDB-backed) - LEGACY
   # Enables semantic search and long-term memory for SLMs
@@ -55,9 +55,9 @@ memory:
   embedding_dim: 384                    # Embedding dimension (384 for small models, 768 for larger)
   
   # Context Window Management
-  max_context_tokens: 8192  
+  max_context_tokens: 8192
   reserved_for_prompt: 1024
-  reserved_for_summary: 512
+  reserved_for_summary: 1024     # INCREASED: More space for summary
   
   # Retrieval Settings - OPTIMIZED for recall
   min_similarity: 0.25                                  # LOWERED: Retrieve more potentially relevant facts

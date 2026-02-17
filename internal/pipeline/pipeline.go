@@ -50,6 +50,7 @@ type Pipeline struct {
 	summarizer     summarizer
 	imageProcessor image.Processor
 	imageCache     sync.Map
+	sessionCache   *memory.SessionCache // In-memory session for instant recall
 
 	// Omem long-term memory integration
 	omemAdapter *omem.Adapter
@@ -117,6 +118,8 @@ func New(cfg config.Config, registry runtime.Registry) (*Pipeline, error) {
 			if cfg.Memory.Omem.ExternalRAG.Enabled && retriever != nil {
 				omemAdapter.SetExternalRAG(retriever)
 				log.Printf("omem external RAG enabled (corpus: %s)", cfg.Memory.Omem.ExternalRAG.CorpusPath)
+			} else if retriever != nil && !cfg.Memory.Omem.ExternalRAG.Enabled {
+				log.Printf("omem external RAG disabled in config, using internal storage only")
 			}
 			omemHook = omem.NewPipelineHook(omemAdapter)
 			log.Println("omem long-term memory initialized")
@@ -132,6 +135,7 @@ func New(cfg config.Config, registry runtime.Registry) (*Pipeline, error) {
 		retriever:      retriever,
 		summarizer:     summarizer,
 		imageProcessor: imageProcessor,
+		sessionCache:   memory.NewSessionCache(cfg.Memory.TurnsToUse),
 		omemAdapter:    omemAdapter,
 		omemHook:       omemHook,
 	}, nil
@@ -406,23 +410,49 @@ func (p *Pipeline) Respond(ctx context.Context, message string, images []string,
 		return cached.(Result), nil
 	}
 
-	// 1. Fetch History (Fast, IO bound local DB)
+	// 1. Fetch History - Use session cache for fast access (load from store only once)
 	historyLimit := p.cfg.Memory.TurnsToUse
 	if historyLimit <= 0 {
 		historyLimit = 6
 	}
 
-	previousEntries, err := p.store.Recent(historyLimit)
-	if err != nil {
-		log.Printf("warning: pipeline failed to load memory history: %v", err)
-		// Continue with empty history
-		previousEntries = []memory.Entry{}
+	// Lazy load session cache from store on first request
+	if p.sessionCache != nil && !p.sessionCache.IsLoaded() {
+		previousEntries, err := p.store.Recent(historyLimit)
+		if err == nil {
+			for i := len(previousEntries) - 1; i >= 0; i-- {
+				entry := previousEntries[i]
+				p.sessionCache.AddTurn(entry.Role, entry.Content)
+			}
+			p.sessionCache.SetLoaded()
+		}
 	}
 
-	history := make([]conversation.HistoryItem, 0, len(previousEntries))
-	for i := len(previousEntries) - 1; i >= 0; i-- {
-		entry := previousEntries[i]
-		history = append(history, conversation.HistoryItem{Role: entry.Role, Content: entry.Content})
+	// Build history from session cache (fast, in-memory)
+	var history []conversation.HistoryItem
+	if p.sessionCache != nil && p.sessionCache.Len() > 0 {
+		turns := p.sessionCache.GetRecentTurns(historyLimit)
+		history = make([]conversation.HistoryItem, 0, len(turns))
+		for _, turn := range turns {
+			history = append(history, conversation.HistoryItem{Role: turn.Role, Content: turn.Content})
+		}
+	} else {
+		// Fallback to store if session cache not available
+		previousEntries, err := p.store.Recent(historyLimit)
+		if err != nil {
+			log.Printf("warning: pipeline failed to load memory history: %v", err)
+			previousEntries = []memory.Entry{}
+		}
+		history = make([]conversation.HistoryItem, 0, len(previousEntries))
+		for i := len(previousEntries) - 1; i >= 0; i-- {
+			entry := previousEntries[i]
+			history = append(history, conversation.HistoryItem{Role: entry.Role, Content: entry.Content})
+		}
+	}
+
+	// Add current user message to session cache for instant recall
+	if p.sessionCache != nil {
+		p.sessionCache.AddTurn("user", normalized)
 	}
 
 	// 2. Parallelize Heavy Context Tasks (Summarization, Vector Search, RAG, Omem)
@@ -435,7 +465,9 @@ func (p *Pipeline) Respond(ctx context.Context, message string, images []string,
 	)
 
 	// Task A: Summarization
-	if !opts.DisableSummary && p.summarizer != nil && len(history) > 0 {
+	// Skip on-demand summarization if omem is enabled - omem provides pre-computed rolling summary
+	// This significantly reduces latency by avoiding an extra LLM call per request
+	if !opts.DisableSummary && p.summarizer != nil && len(history) > 0 && p.omemAdapter == nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -591,6 +623,10 @@ func (p *Pipeline) Respond(ctx context.Context, message string, images []string,
 				log.Printf("warning: pipeline failed to store assistant turn in vector memory: %v", err)
 			}
 		}
+		// Also add to session cache for instant recall
+		if p.sessionCache != nil {
+			p.sessionCache.AddTurn("assistant", text)
+		}
 
 		// Learn from this conversation turn (async, non-blocking)
 		if p.omemHook != nil {
@@ -605,13 +641,17 @@ func (p *Pipeline) Respond(ctx context.Context, message string, images []string,
 
 	response, err := p.manager.Generate(ctx, req)
 	if err != nil {
+		log.Printf("pipeline: Generate() failed: %v", err)
 		return Result{}, err
 	}
 
 	text := response.Text
 	if text == "" {
+		log.Printf("pipeline: Generate() returned empty text, using fallback")
 		text = "I'm ready to help. How can I assist you today?"
 	}
+
+	log.Printf("pipeline: Generate() completed, response length: %d chars", len(text))
 
 	if err := p.store.Append("assistant", text); err != nil {
 		log.Printf("warning: pipeline failed to persist assistant turn: %v", err)
@@ -621,6 +661,10 @@ func (p *Pipeline) Respond(ctx context.Context, message string, images []string,
 		if _, err := p.vectorEngine.Store(ctx, text, "assistant"); err != nil {
 			log.Printf("warning: pipeline failed to store assistant turn in vector memory: %v", err)
 		}
+	}
+	// Also add to session cache for instant recall
+	if p.sessionCache != nil {
+		p.sessionCache.AddTurn("assistant", text)
 	}
 
 	// Learn from this conversation turn (async, non-blocking)

@@ -421,6 +421,7 @@ type NativeEmbeddingConfig struct {
 	ModelPath   string `yaml:"model_path"`
 	ContextSize int    `yaml:"context_size"`
 	BatchSize   int    `yaml:"batch_size"`
+	UbatchSize  int    `yaml:"ubatch_size"`
 	Threads     int    `yaml:"threads"`
 	GPULayers   int    `yaml:"gpu_layers"`
 	Mmap        *bool  `yaml:"mmap"`
@@ -590,7 +591,7 @@ func Default() Config {
 					ComplexityDelta:            2.0,
 					MaxTopK:                    20,
 					MinScore:                   0.3,
-					MaxContextTokens:           1000,
+					MaxContextTokens:           1500, // Balanced: enough context without slow inference
 					RecencyHalfLifeHours:       168,
 					ImportanceWeight:           0.15,
 					RecencyWeight:              0.1,

@@ -147,6 +147,7 @@ func (p *Pipeline) processImages(ctx context.Context, inputs []string) ([]string
 
 func initialiseRetriever(cfg config.Config, embedder embedding.Provider) (rag.Retriever, error) {
 	if !cfg.RAG.Enabled {
+		log.Println("RAG disabled in config, skipping retriever initialization")
 		return nil, nil
 	}
 
