@@ -4,6 +4,7 @@
 #
 #   make setup     — init submodule + build llama.cpp
 #   make native    — build OpenEye with native CGo backend
+#   make pi-native — build OpenEye with Raspberry Pi 5 optimizations
 #   make http      — build OpenEye HTTP-only (no C deps)
 #   make clean     — remove build artifacts
 #   make test      — run Go tests
@@ -16,6 +17,7 @@
 NPROC     ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 LLAMA_DIR  = llama.cpp
 BUILD_DIR  = $(LLAMA_DIR)/build
+PI_NPROC  ?= 4
 
 # GPU flags (set CUDA=1 or VULKAN=1 on the command line)
 CMAKE_EXTRA_FLAGS ?=
@@ -26,11 +28,20 @@ ifdef VULKAN
 	CMAKE_EXTRA_FLAGS += -DGGML_VULKAN=ON
 endif
 
+PI_CMAKE_FLAGS = \
+	-DCMAKE_BUILD_TYPE=Release \
+	-DBUILD_SHARED_LIBS=OFF \
+	-DGGML_NATIVE=ON \
+	-DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod \
+	-DGGML_OPENMP=ON \
+	-DGGML_CPU_KLEIDIAI=ON \
+	-DLLAMA_BUILD_TOOLS=ON
+
 # ---------------------------------------------------------------------------
 # Targets
 # ---------------------------------------------------------------------------
 
-.PHONY: all setup llama native http clean clean-llama test bench help
+.PHONY: all setup llama native pi-llama pi-native http clean clean-llama test bench help
 
 all: native
 
@@ -62,6 +73,24 @@ $(BUILD_DIR)/src/libllama.a:
 ## native: Build OpenEye with native CGo backend (builds llama.cpp first if needed)
 native: llama
 	@echo "=> Building OpenEye (native)..."
+	CGO_ENABLED=1 go build -tags native -o openeye-native .
+	@echo "=> Done: ./openeye-native"
+
+## pi-llama: Rebuild llama.cpp with Raspberry Pi 5 optimizations
+pi-llama:
+	@if [ ! -f "$(LLAMA_DIR)/CMakeLists.txt" ]; then \
+		echo "=> Initializing llama.cpp submodule..."; \
+		git submodule update --init --depth 1 llama.cpp; \
+	fi
+	@echo "=> Rebuilding llama.cpp for Raspberry Pi 5 ($(PI_NPROC) threads)..."
+	rm -rf $(BUILD_DIR)
+	cmake -B $(BUILD_DIR) -S $(LLAMA_DIR) $(PI_CMAKE_FLAGS)
+	cmake --build $(BUILD_DIR) --config Release -j$(PI_NPROC)
+	@echo "=> Raspberry Pi 5 llama.cpp build complete."
+
+## pi-native: Build OpenEye with Raspberry Pi 5 optimized native backend
+pi-native: pi-llama
+	@echo "=> Building OpenEye (native, Raspberry Pi 5 optimized)..."
 	CGO_ENABLED=1 go build -tags native -o openeye-native .
 	@echo "=> Done: ./openeye-native"
 
@@ -102,12 +131,17 @@ help:
 	@echo ""
 	@echo "  make setup          Build llama.cpp static libraries"
 	@echo "  make native         Build OpenEye with native CGo backend (default)"
+	@echo "  make pi-native      Build OpenEye with Raspberry Pi 5 optimizations"
 	@echo "  make http           Build OpenEye HTTP-only (no C deps)"
 	@echo "  make test           Run Go tests"
 	@echo "  make bench          Run memory benchmarks"
 	@echo "  make clean          Remove Go build artifacts"
 	@echo "  make clean-llama    Remove llama.cpp build directory"
 	@echo "  make clean-all      Remove all build artifacts"
+	@echo ""
+	@echo "Raspberry Pi 5 Build:"
+	@echo "  make pi-native      Rebuild llama.cpp with ARM dotprod + KleidiAI"
+	@echo "  PI_NPROC=$(PI_NPROC) Threads used by the Pi-optimized build"
 	@echo ""
 	@echo "GPU Options:"
 	@echo "  make setup CUDA=1   Build with NVIDIA CUDA support"

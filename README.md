@@ -242,6 +242,9 @@ cd OpenEye
 # Build everything (llama.cpp + OpenEye native backend)
 make native
 
+# Raspberry Pi 5 optimized native build
+make pi-native
+
 # Or HTTP-only build (no C dependencies)
 make http
 ```
@@ -253,6 +256,7 @@ If you cloned without `--recurse-submodules`, run `make setup` to fetch and buil
 | Target | Description |
 |--------|-------------|
 | `make native` | Build llama.cpp (if needed) + OpenEye with native CGo backend |
+| `make pi-native` | Rebuild llama.cpp for Raspberry Pi 5 and build OpenEye with Pi-tuned native optimizations |
 | `make http` | Build OpenEye HTTP-only -- no C compiler needed |
 | `make setup` | Initialize submodule + build llama.cpp static libraries |
 | `make test` | Run all Go tests |
@@ -260,6 +264,8 @@ If you cloned without `--recurse-submodules`, run `make setup` to fetch and buil
 | `make clean` | Remove Go build artifacts |
 | `make clean-llama` | Remove llama.cpp build directory |
 | `make clean-all` | Remove all build artifacts |
+
+For Raspberry Pi 5, `make pi-native` rebuilds llama.cpp with `armv8.2-a+dotprod`, OpenMP, and KleidiAI enabled before linking the native OpenEye binary.
 
 **GPU acceleration** (optional):
 
