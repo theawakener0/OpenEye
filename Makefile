@@ -32,7 +32,7 @@ PI_CMAKE_FLAGS = \
 	-DCMAKE_BUILD_TYPE=Release \
 	-DBUILD_SHARED_LIBS=OFF \
 	-DGGML_NATIVE=ON \
-	-DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod \
+	-DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16 \
 	-DGGML_OPENMP=ON \
 	-DGGML_CPU_KLEIDIAI=ON \
 	-DLLAMA_BUILD_TOOLS=ON
@@ -140,7 +140,7 @@ help:
 	@echo "  make clean-all      Remove all build artifacts"
 	@echo ""
 	@echo "Raspberry Pi 5 Build:"
-	@echo "  make pi-native      Rebuild llama.cpp with ARM dotprod + KleidiAI"
+	@echo "  make pi-native      Rebuild llama.cpp with ARM dotprod + fp16 + KleidiAI"
 	@echo "  PI_NPROC=$(PI_NPROC) Threads used by the Pi-optimized build"
 	@echo ""
 	@echo "GPU Options:"

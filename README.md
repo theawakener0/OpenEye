@@ -265,7 +265,45 @@ If you cloned without `--recurse-submodules`, run `make setup` to fetch and buil
 | `make clean-llama` | Remove llama.cpp build directory |
 | `make clean-all` | Remove all build artifacts |
 
-For Raspberry Pi 5, `make pi-native` rebuilds llama.cpp with `armv8.2-a+dotprod`, OpenMP, and KleidiAI enabled before linking the native OpenEye binary.
+For Raspberry Pi 5, `make pi-native` rebuilds llama.cpp with `armv8.2-a+dotprod+fp16`, OpenMP, and KleidiAI enabled before linking the native OpenEye binary.
+
+### Raspberry Pi Tuning
+
+For best Raspberry Pi 5 performance, use the dedicated Pi build target:
+
+```bash
+make pi-native
+```
+
+This target rebuilds the vendored `llama.cpp` with:
+
+- `GGML_NATIVE=ON` for host-specific CPU tuning
+- `GGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16` to enable Pi 5-friendly ARM dot-product and FP16 vector paths
+- `GGML_OPENMP=ON` for multicore CPU execution
+- `GGML_CPU_KLEIDIAI=ON` for Arm-optimized microkernels
+
+Recommended native runtime settings for Pi 5:
+
+```yaml
+runtime:
+  native:
+    mmap: true
+    mlock: false
+    threads: 4
+    threads_batch: 4
+    flash_attention: true
+    warmup: true
+    kv_cache_type: "q4_0"
+    context_size: 2048
+    batch_size: 512
+```
+
+Notes:
+
+- `mmap: true` is recommended on Linux and is already the default for the native backend; it lets the OS use the model file efficiently through the page cache instead of copying everything into anonymous RAM.
+- `mlock: false` is the safer default on 8 GB Pi systems because locking large model weights into RAM can reduce system headroom.
+- Lower `context_size` usually improves responsiveness; increase it only when you need longer active context.
+- `batch_size` and `threads_batch` mainly affect prompt ingestion throughput; benchmark `512` vs `1024` on your exact model.
 
 **GPU acceleration** (optional):
 
