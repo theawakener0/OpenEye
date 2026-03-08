@@ -112,8 +112,9 @@ Omem is a novel memory system engineered for edge SLMs. It decouples knowledge f
 | **Context Compressor** | Importance-weighted context truncation | Combats "lost in the middle" problem |
 | **Memory Pruner** | Automatic pruning at scale | Prevents unbounded memory growth |
 | **Reranker** | Lightweight result reranking | Improves result precision |
+| **ANN Semantic Index** | IVF-PQ-style sidecar index with exact rerank | Reduces semantic candidate search cost as memory grows |
 
-**Performance**: P50 retrieval latency ~71ms, P95 ~99ms. ~30% storage reduction via atomic deduplication. Hot cache enables ~80% of repeated queries at <5ms.
+**Performance**: P50 retrieval latency ~71ms, P95 ~99ms. ~30% storage reduction via atomic deduplication. Hot cache enables ~80% of repeated queries at <5ms. ANN-backed semantic retrieval is implemented behind the Omem semantic search path and falls back to exact scan when disabled or below threshold.
 
 See the [Paper/](Paper/) directory for full research documentation and ablation studies.
 
@@ -351,6 +352,20 @@ memory:
     memory_pruner_enabled: true      # Automatic pruning at scale
     memory_pruner_threshold: 15000
     reranker_enabled: false      # Lightweight reranking
+    ann:
+      enabled: false            # IVF-PQ-style semantic candidate index
+      backend: "ivfpq"
+      index_path: "openeye_omem.ivfpq"
+      rebuild_on_startup: false
+      fallback_to_scan: true
+      min_facts_to_enable: 5000
+      oversample_factor: 4
+      exact_rerank_limit: 64
+      nlist: 64
+      nprobe: 6
+      pq_subvectors: 24
+      pq_bits: 4
+      train_min_facts: 2000
   mem0:
     enabled: false             # legacy alternative
 
@@ -461,6 +476,7 @@ Production benchmarks (February 2026) running LFM2.5-1.2B on edge hardware:
 - **Hot cache** enables ~80% of repeated queries at sub-5ms latency
 - **Context compressor** reduces "lost in the middle" effect
 - **Memory pruner** automatically manages growth at 10k+ facts
+- **ANN semantic retrieval** now supports an IVF-PQ-style candidate index with exact reranking and brute-force fallback
 - **1.42x speedup** via speculative decoding with gemma-3-270m
 - KV cache quantization reduces memory by **75%** with <0.2% quality loss
 - **88% recall** maintained even after 50+ conversation turns
