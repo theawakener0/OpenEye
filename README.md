@@ -93,16 +93,27 @@ graph TB
 
 ## Omem (Omni Memory) Architecture
 
-Omem is a novel four-pillar memory system engineered for edge SLMs. It decouples knowledge from model size, letting 1B-3B parameter models perform complex reasoning.
+Omem is a novel memory system engineered for edge SLMs. It decouples knowledge from model size, letting 1B-3B parameter models perform complex reasoning.
 
-| Pillar | Description |
+### Core Components
+
+| Component | Description |
 |--------|-------------|
 | **Atomic Encoding** | Coreference resolution + temporal anchoring -- stored facts remain interpretable in isolation |
 | **Multi-View Indexing** | Semantic (vector) + lexical (BM25) + symbolic (graph) retrieval -- 85% recall, 25% over vector-only |
 | **Adaptive Retrieval** | Dynamically scales search depth by query complexity, avoiding unnecessary LLM overhead |
 | **Rolling Summarization** | Maintains long-term context without linear token growth -- >70% long-range recall after 50+ turns |
 
-**Performance**: 4x faster than Mem0 -- P50 retrieval latency ~12ms, P95 ~35ms. ~30% storage reduction via atomic deduplication.
+### Performance Optimization Components
+
+| Component | Purpose | Benefit |
+|-----------|---------|---------|
+| **Hot Cache** | LRU cache for frequently accessed facts | Sub-5ms retrieval for repeated queries |
+| **Context Compressor** | Importance-weighted context truncation | Combats "lost in the middle" problem |
+| **Memory Pruner** | Automatic pruning at scale | Prevents unbounded memory growth |
+| **Reranker** | Lightweight result reranking | Improves result precision |
+
+**Performance**: P50 retrieval latency ~71ms, P95 ~99ms. ~30% storage reduction via atomic deduplication. Hot cache enables ~80% of repeated queries at <5ms.
 
 See the [Paper/](Paper/) directory for full research documentation and ablation studies.
 
@@ -332,6 +343,14 @@ runtime:
 memory:
   omem:
     enabled: true              # recommended memory engine
+    hot_cache_enabled: true    # LRU cache for fast retrieval
+    hot_cache_size: 500        # Number of facts to cache
+    hot_cache_ttl: "10m"       # Cache time-to-live
+    context_compressor_enabled: true  # Importance-weighted compression
+    context_compressor_max_tokens: 1000
+    memory_pruner_enabled: true      # Automatic pruning at scale
+    memory_pruner_threshold: 15000
+    reranker_enabled: false      # Lightweight reranking
   mem0:
     enabled: false             # legacy alternative
 
@@ -435,9 +454,13 @@ Production benchmarks (February 2026) running LFM2.5-1.2B on edge hardware:
 | **Long-term Recall** | **88%** | Facts from 50+ turns ago |
 | **Cold Start** | **2.1s** | 4-6× faster than Python |
 | **Memory Footprint** | **103 MB** | 3-5× leaner than alternatives |
+| **Hot Cache Hit Rate** | **~80%** | Repeated queries at <5ms |
 
 **Key Achievements:**
 - Omem achieves **96% recall accuracy** (vs 84% legacy, 78% Python Mem0)
+- **Hot cache** enables ~80% of repeated queries at sub-5ms latency
+- **Context compressor** reduces "lost in the middle" effect
+- **Memory pruner** automatically manages growth at 10k+ facts
 - **1.42x speedup** via speculative decoding with gemma-3-270m
 - KV cache quantization reduces memory by **75%** with <0.2% quality loss
 - **88% recall** maintained even after 50+ conversation turns
