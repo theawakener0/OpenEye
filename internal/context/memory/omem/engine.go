@@ -20,6 +20,10 @@ import (
 // - EpisodeManager: session/episode tracking
 // - ParallelProcessor: efficient batch processing
 // - ExternalRAG: optional external knowledge base integration
+// - HotCache: LRU cache for sub-5ms retrieval
+// - ContextCompressor: importance-weighted context compression
+// - MemoryPruner: automatic pruning at scale
+// - Reranker: result reranking
 type Engine struct {
 	config Config
 	mu     sync.RWMutex
@@ -36,6 +40,12 @@ type Engine struct {
 
 	// External RAG for knowledge retrieval
 	externalRAG rag.Retriever
+
+	// Performance optimization components
+	hotCache          *HotCache
+	contextCompressor *ContextCompressor
+	memoryPruner      *MemoryPruner
+	reranker          *LightweightReranker
 
 	// LLM functions (configurable)
 	llmGenerate   func(ctx context.Context, prompt string) (string, error)
@@ -121,6 +131,58 @@ func (e *Engine) Initialize(
 	if e.config.Parallel.EnableAsync {
 		e.processor = NewParallelProcessor(e.config.Parallel)
 		e.processor.Start()
+	}
+
+	// Initialize hot cache for sub-5ms retrieval
+	if e.config.HotCacheEnabled {
+		ttl := 10 * time.Minute
+		if e.config.HotCacheTTL != "" {
+			if parsed, err := time.ParseDuration(e.config.HotCacheTTL); err == nil {
+				ttl = parsed
+			}
+		}
+		hotCacheConfig := HotCacheConfig{
+			MaxSize:              e.config.HotCacheSize,
+			TTL:                  ttl,
+			EnableAutoInvalidate: true,
+		}
+		e.hotCache = NewHotCache(hotCacheConfig)
+	}
+
+	// Initialize context compressor
+	if e.config.ContextCompressorEnabled {
+		compressorConfig := ContextCompressorConfig{
+			MaxTokens:               e.config.ContextCompressorMaxTokens,
+			ImportanceWeight:        0.5,
+			RecencyWeight:           0.3,
+			PositionWeight:          0.2,
+			EnableImportancePruning: true,
+			MinImportanceThreshold:  0.1,
+		}
+		e.contextCompressor = NewContextCompressor(compressorConfig)
+	}
+
+	// Initialize memory pruner
+	if e.config.MemoryPrunerEnabled {
+		prunerConfig := MemoryPrunerConfig{
+			PruneThreshold:      e.config.MemoryPrunerThreshold,
+			PruneKeepRecent:     e.config.MemoryPrunerThreshold - 5000,
+			MinImportanceToKeep: 0.2,
+			EnableAutoPrune:     true,
+			ImportanceWeight:    0.5,
+			RecencyWeight:       0.3,
+			AccessWeight:        0.2,
+		}
+		e.memoryPruner = NewMemoryPruner(prunerConfig, e.store)
+	}
+
+	// Initialize reranker
+	if e.config.RerankerEnabled {
+		rerankerConfig := RerankerConfig{
+			EnableReranking: true,
+			MaxCandidates:   50,
+		}
+		e.reranker = NewLightweightReranker(rerankerConfig)
 	}
 
 	e.initialized = true
@@ -263,6 +325,18 @@ func (e *Engine) ProcessConversation(ctx context.Context, turns []ConversationTu
 		e.summary.MarkDirty(factIDs...)
 	}
 
+	// Step 5: Invalidate hot cache when new facts are added
+	if e.hotCache != nil && len(storedFacts) > 0 {
+		e.hotCache.InvalidateAll()
+	}
+
+	// Step 6: Trigger pruning if enabled
+	if e.memoryPruner != nil && len(storedFacts) > 0 {
+		go func() {
+			_, _ = e.memoryPruner.Prune(context.Background())
+		}()
+	}
+
 	return result, nil
 }
 
@@ -297,8 +371,19 @@ func (e *Engine) GetContextForPrompt(ctx context.Context, prompt string, maxToke
 	// Check if external RAG is available
 	useExternalRAG := e.externalRAG != nil
 
-	// Step 1: Retrieve relevant facts from internal storage
-	if e.retriever != nil {
+	// Step 0: Check hot cache first for sub-5ms retrieval
+	if e.hotCache != nil && e.retriever != nil {
+		cachedFacts, found := e.hotCache.GetByQueryHash(ctx, prompt)
+		if found && cachedFacts != nil {
+			result.Facts = []ScoredFact{{
+				Fact:  cachedFacts.Fact,
+				Score: cachedFacts.Score,
+			}}
+		}
+	}
+
+	// Step 1: Retrieve relevant facts from internal storage (if not in cache)
+	if len(result.Facts) == 0 && e.retriever != nil {
 		retrieval, err := e.retriever.Retrieve(ctx, RetrievalRequest{
 			Query:       prompt,
 			CurrentTime: time.Now(),
@@ -308,6 +393,15 @@ func (e *Engine) GetContextForPrompt(ctx context.Context, prompt string, maxToke
 			result.Facts = retrieval.Facts
 			result.Complexity = retrieval.Complexity
 			result.QueryType = retrieval.QueryType
+
+			// Cache the retrieved facts for future queries
+			if e.hotCache != nil && len(retrieval.Facts) > 0 {
+				go func() {
+					for _, sf := range retrieval.Facts {
+						e.hotCache.Put(context.Background(), sf.Fact, sf.Fact.Embedding, sf.Score)
+					}
+				}()
+			}
 		}
 	}
 
@@ -320,6 +414,19 @@ func (e *Engine) GetContextForPrompt(ctx context.Context, prompt string, maxToke
 				result.ExternalKnowledge = append(result.ExternalKnowledge,
 					fmt.Sprintf("[%s] %s", doc.Source, doc.Text))
 			}
+		}
+	}
+
+	// Step 1c: Apply reranking if enabled
+	if e.reranker != nil && len(result.Facts) > 0 {
+		result.Facts = e.reranker.Rerank(ctx, prompt, result.Facts)
+	}
+
+	// Step 1d: Apply context compression if enabled
+	if e.contextCompressor != nil && len(result.Facts) > 0 && maxTokens > 0 {
+		compressedFacts, _ := e.contextCompressor.Compress(ctx, result.Facts, maxTokens)
+		if len(compressedFacts) > 0 {
+			result.Facts = compressedFacts
 		}
 	}
 
