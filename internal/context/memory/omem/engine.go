@@ -46,6 +46,7 @@ type Engine struct {
 	contextCompressor *ContextCompressor
 	memoryPruner      *MemoryPruner
 	reranker          *LightweightReranker
+	annIndex          VectorCandidateIndex
 
 	// LLM functions (configurable)
 	llmGenerate   func(ctx context.Context, prompt string) (string, error)
@@ -90,6 +91,23 @@ func (e *Engine) Initialize(
 	e.store, err = NewFactStore(e.config.Storage)
 	if err != nil {
 		return err
+	}
+
+	if e.config.ANN.Enabled {
+		e.annIndex, err = newIVFPQIndex(
+			e.config.ANN,
+			e.config.Embedding.Dimension,
+			e.config.Embedding.Normalize,
+			e.config.Embedding.Model,
+		)
+		if err == nil && e.annIndex != nil {
+			e.store.SetANNIndex(e.annIndex)
+			if e.config.ANN.RebuildOnStartup {
+				if rebuildErr := e.rebuildANNIndex(context.Background()); rebuildErr != nil {
+					return rebuildErr
+				}
+			}
+		}
 	}
 
 	// Initialize atomic encoder
@@ -187,6 +205,24 @@ func (e *Engine) Initialize(
 
 	e.initialized = true
 	return nil
+}
+
+func (e *Engine) rebuildANNIndex(ctx context.Context) error {
+	if e.store == nil || e.annIndex == nil {
+		return nil
+	}
+	limit := e.config.Storage.MaxFacts
+	if limit <= 0 {
+		limit = 50000
+	}
+	facts, err := e.store.GetRecentFacts(ctx, limit)
+	if err != nil {
+		return err
+	}
+	if len(facts) < e.config.ANN.TrainMinFacts {
+		return nil
+	}
+	return e.annIndex.Rebuild(ctx, facts)
 }
 
 // ============================================================================
@@ -334,6 +370,24 @@ func (e *Engine) ProcessConversation(ctx context.Context, turns []ConversationTu
 	if e.memoryPruner != nil && len(storedFacts) > 0 {
 		go func() {
 			_, _ = e.memoryPruner.Prune(context.Background())
+		}()
+	}
+
+	if e.annIndex != nil && len(storedFacts) > 0 {
+		go func() {
+			stats, err := e.store.GetStats(context.Background())
+			if err != nil {
+				return
+			}
+			totalFacts, _ := stats["active_facts"].(int)
+			if totalFacts < e.config.ANN.TrainMinFacts {
+				return
+			}
+			_, annStatsErr := e.annIndex.Stats(context.Background())
+			if annStatsErr != nil {
+				return
+			}
+			_ = e.rebuildANNIndex(context.Background())
 		}()
 	}
 
@@ -619,6 +673,13 @@ func (e *Engine) GetStats(ctx context.Context) map[string]interface{} {
 
 	if e.processor != nil {
 		stats["processor"] = e.processor.GetStats()
+	}
+
+	if e.annIndex != nil {
+		annStats, err := e.annIndex.Stats(ctx)
+		if err == nil {
+			stats["ann"] = annStats
+		}
 	}
 
 	return stats

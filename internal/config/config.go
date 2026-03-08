@@ -181,6 +181,9 @@ type OmemConfig struct {
 
 	// External RAG integration for knowledge retrieval
 	ExternalRAG OmemExternalRAGConfig `yaml:"external_rag"`
+
+	// ANN-backed semantic retrieval
+	ANN OmemANNConfig `yaml:"ann"`
 }
 
 // OmemStorageConfig configures Omem DuckDB storage.
@@ -275,6 +278,23 @@ type OmemExternalRAGConfig struct {
 	CorpusPath         string `yaml:"corpus_path"`
 	UseAsPrimary       bool   `yaml:"use_as_primary"`
 	FallbackToInternal bool   `yaml:"fallback_to_internal"`
+}
+
+// OmemANNConfig configures ANN-backed semantic retrieval.
+type OmemANNConfig struct {
+	Enabled          bool   `yaml:"enabled"`
+	Backend          string `yaml:"backend"`
+	IndexPath        string `yaml:"index_path"`
+	RebuildOnStartup bool   `yaml:"rebuild_on_startup"`
+	FallbackToScan   bool   `yaml:"fallback_to_scan"`
+	MinFactsToEnable int    `yaml:"min_facts_to_enable"`
+	OversampleFactor int    `yaml:"oversample_factor"`
+	ExactRerankLimit int    `yaml:"exact_rerank_limit"`
+	NList            int    `yaml:"nlist"`
+	NProbe           int    `yaml:"nprobe"`
+	PQSubvectors     int    `yaml:"pq_subvectors"`
+	PQBits           int    `yaml:"pq_bits"`
+	TrainMinFacts    int    `yaml:"train_min_facts"`
 }
 
 // Mem0Config configures the mem0-style intelligent memory system.
@@ -624,6 +644,21 @@ func Default() Config {
 					Enabled:            false,
 					UseAsPrimary:       false,
 					FallbackToInternal: true,
+				},
+				ANN: OmemANNConfig{
+					Enabled:          false,
+					Backend:          "ivfpq",
+					IndexPath:        "openeye_omem.ivfpq",
+					RebuildOnStartup: false,
+					FallbackToScan:   true,
+					MinFactsToEnable: 5000,
+					OversampleFactor: 4,
+					ExactRerankLimit: 64,
+					NList:            64,
+					NProbe:           6,
+					PQSubvectors:     24,
+					PQBits:           4,
+					TrainMinFacts:    2000,
 				},
 			},
 		},
@@ -1571,6 +1606,47 @@ func mergeOmemConfig(base, override OmemConfig) OmemConfig {
 	}
 	if override.ExternalRAG.FallbackToInternal {
 		result.ExternalRAG.FallbackToInternal = true
+	}
+
+	// ANN
+	if override.ANN.Enabled {
+		result.ANN.Enabled = true
+	}
+	if override.ANN.Backend != "" {
+		result.ANN.Backend = override.ANN.Backend
+	}
+	if override.ANN.IndexPath != "" {
+		result.ANN.IndexPath = override.ANN.IndexPath
+	}
+	if override.ANN.RebuildOnStartup {
+		result.ANN.RebuildOnStartup = true
+	}
+	if override.ANN.FallbackToScan {
+		result.ANN.FallbackToScan = true
+	}
+	if override.ANN.MinFactsToEnable != 0 {
+		result.ANN.MinFactsToEnable = override.ANN.MinFactsToEnable
+	}
+	if override.ANN.OversampleFactor != 0 {
+		result.ANN.OversampleFactor = override.ANN.OversampleFactor
+	}
+	if override.ANN.ExactRerankLimit != 0 {
+		result.ANN.ExactRerankLimit = override.ANN.ExactRerankLimit
+	}
+	if override.ANN.NList != 0 {
+		result.ANN.NList = override.ANN.NList
+	}
+	if override.ANN.NProbe != 0 {
+		result.ANN.NProbe = override.ANN.NProbe
+	}
+	if override.ANN.PQSubvectors != 0 {
+		result.ANN.PQSubvectors = override.ANN.PQSubvectors
+	}
+	if override.ANN.PQBits != 0 {
+		result.ANN.PQBits = override.ANN.PQBits
+	}
+	if override.ANN.TrainMinFacts != 0 {
+		result.ANN.TrainMinFacts = override.ANN.TrainMinFacts
 	}
 
 	return result

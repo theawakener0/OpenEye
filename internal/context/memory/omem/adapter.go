@@ -124,6 +124,22 @@ func configFromOmemConfig(cfg config.OmemConfig) Config {
 			QueueSize:   cfg.Parallel.QueueSize,
 			EnableAsync: cfg.Parallel.EnableAsync,
 		},
+
+		ANN: ANNConfig{
+			Enabled:          cfg.ANN.Enabled,
+			Backend:          cfg.ANN.Backend,
+			IndexPath:        cfg.ANN.IndexPath,
+			RebuildOnStartup: cfg.ANN.RebuildOnStartup,
+			FallbackToScan:   cfg.ANN.FallbackToScan,
+			MinFactsToEnable: cfg.ANN.MinFactsToEnable,
+			OversampleFactor: cfg.ANN.OversampleFactor,
+			ExactRerankLimit: cfg.ANN.ExactRerankLimit,
+			NList:            cfg.ANN.NList,
+			NProbe:           cfg.ANN.NProbe,
+			PQSubvectors:     cfg.ANN.PQSubvectors,
+			PQBits:           cfg.ANN.PQBits,
+			TrainMinFacts:    cfg.ANN.TrainMinFacts,
+		},
 	}
 }
 

@@ -102,6 +102,9 @@ type Config struct {
 
 	// RerankerEnabled enables reranking of retrieved results
 	RerankerEnabled bool `yaml:"reranker_enabled"`
+
+	// ANN configures approximate semantic retrieval
+	ANN ANNConfig `yaml:"ann"`
 }
 
 // StorageConfig configures the underlying DuckDB storage engine.
@@ -250,6 +253,48 @@ type RetrievalConfig struct {
 
 	// EnableComplexityEstimation enables adaptive depth
 	EnableComplexityEstimation bool `yaml:"enable_complexity_estimation"`
+}
+
+// ANNConfig configures approximate nearest-neighbor retrieval.
+type ANNConfig struct {
+	// Enabled toggles ANN-backed semantic retrieval.
+	Enabled bool `yaml:"enabled"`
+
+	// Backend selects the ANN implementation.
+	Backend string `yaml:"backend"`
+
+	// IndexPath is the sidecar file used to persist the ANN index.
+	IndexPath string `yaml:"index_path"`
+
+	// RebuildOnStartup forces a rebuild from DuckDB embeddings during startup.
+	RebuildOnStartup bool `yaml:"rebuild_on_startup"`
+
+	// FallbackToScan falls back to exact scan if ANN search is unavailable.
+	FallbackToScan bool `yaml:"fallback_to_scan"`
+
+	// MinFactsToEnable keeps exact scan for smaller datasets.
+	MinFactsToEnable int `yaml:"min_facts_to_enable"`
+
+	// OversampleFactor multiplies requested K before exact reranking.
+	OversampleFactor int `yaml:"oversample_factor"`
+
+	// ExactRerankLimit caps the number of ANN candidates reranked exactly.
+	ExactRerankLimit int `yaml:"exact_rerank_limit"`
+
+	// NList is the number of IVF coarse clusters.
+	NList int `yaml:"nlist"`
+
+	// NProbe is the number of IVF lists to probe per query.
+	NProbe int `yaml:"nprobe"`
+
+	// PQSubvectors is the number of PQ subquantizers.
+	PQSubvectors int `yaml:"pq_subvectors"`
+
+	// PQBits is the number of bits per PQ subquantizer.
+	PQBits int `yaml:"pq_bits"`
+
+	// TrainMinFacts is the minimum number of facts needed before training.
+	TrainMinFacts int `yaml:"train_min_facts"`
 }
 
 // EpisodeConfig configures Zep-inspired session/episode tracking.
@@ -434,6 +479,22 @@ func DefaultConfig() Config {
 		MemoryPrunerThreshold: 15000,
 
 		RerankerEnabled: false,
+
+		ANN: ANNConfig{
+			Enabled:          false,
+			Backend:          "ivfpq",
+			IndexPath:        "openeye_omem.ivfpq",
+			RebuildOnStartup: false,
+			FallbackToScan:   true,
+			MinFactsToEnable: 5000,
+			OversampleFactor: 4,
+			ExactRerankLimit: 64,
+			NList:            64,
+			NProbe:           6,
+			PQSubvectors:     24,
+			PQBits:           4,
+			TrainMinFacts:    2000,
+		},
 	}
 }
 
@@ -486,6 +547,33 @@ func (c *Config) Validate() error {
 	}
 	if c.MultiViewIndex.BM25_B <= 0 || c.MultiViewIndex.BM25_B > 1 {
 		c.MultiViewIndex.BM25_B = 0.75
+	}
+	if c.ANN.Backend == "" {
+		c.ANN.Backend = "ivfpq"
+	}
+	if c.ANN.OversampleFactor <= 0 {
+		c.ANN.OversampleFactor = 4
+	}
+	if c.ANN.ExactRerankLimit <= 0 {
+		c.ANN.ExactRerankLimit = 64
+	}
+	if c.ANN.MinFactsToEnable <= 0 {
+		c.ANN.MinFactsToEnable = 5000
+	}
+	if c.ANN.TrainMinFacts <= 0 {
+		c.ANN.TrainMinFacts = 2000
+	}
+	if c.ANN.NList <= 0 {
+		c.ANN.NList = 64
+	}
+	if c.ANN.NProbe <= 0 {
+		c.ANN.NProbe = 6
+	}
+	if c.ANN.PQSubvectors <= 0 {
+		c.ANN.PQSubvectors = 24
+	}
+	if c.ANN.PQBits <= 0 {
+		c.ANN.PQBits = 4
 	}
 
 	return nil
@@ -622,6 +710,38 @@ func (c Config) WithDefaults() Config {
 		c.Parallel.QueueSize = defaults.Parallel.QueueSize
 	}
 
+	// ANN
+	if c.ANN.Backend == "" {
+		c.ANN.Backend = defaults.ANN.Backend
+	}
+	if c.ANN.IndexPath == "" {
+		c.ANN.IndexPath = defaults.ANN.IndexPath
+	}
+	if c.ANN.MinFactsToEnable == 0 {
+		c.ANN.MinFactsToEnable = defaults.ANN.MinFactsToEnable
+	}
+	if c.ANN.OversampleFactor == 0 {
+		c.ANN.OversampleFactor = defaults.ANN.OversampleFactor
+	}
+	if c.ANN.ExactRerankLimit == 0 {
+		c.ANN.ExactRerankLimit = defaults.ANN.ExactRerankLimit
+	}
+	if c.ANN.NList == 0 {
+		c.ANN.NList = defaults.ANN.NList
+	}
+	if c.ANN.NProbe == 0 {
+		c.ANN.NProbe = defaults.ANN.NProbe
+	}
+	if c.ANN.PQSubvectors == 0 {
+		c.ANN.PQSubvectors = defaults.ANN.PQSubvectors
+	}
+	if c.ANN.PQBits == 0 {
+		c.ANN.PQBits = defaults.ANN.PQBits
+	}
+	if c.ANN.TrainMinFacts == 0 {
+		c.ANN.TrainMinFacts = defaults.ANN.TrainMinFacts
+	}
+
 	return c
 }
 
@@ -630,7 +750,7 @@ func (c *Config) String() string {
 	return fmt.Sprintf(
 		"Omem Config: enabled=%t, storage=%s, embedding=%s/%s (dim=%d), "+
 			"atomic_encoder=%t, multi_view=%t (sem=%.2f/lex=%.2f/sym=%.2f), "+
-			"entity_graph=%t (hops=%d), episodes=%t, summary=%t",
+			"entity_graph=%t (hops=%d), episodes=%t, summary=%t, ann=%t/%s",
 		c.Enabled,
 		c.Storage.DBPath,
 		c.Embedding.Provider, c.Embedding.Model, c.Embedding.Dimension,
@@ -642,6 +762,8 @@ func (c *Config) String() string {
 		c.EntityGraph.Enabled, c.EntityGraph.MaxHops,
 		c.Episodes.Enabled,
 		c.Summary.Enabled,
+		c.ANN.Enabled,
+		c.ANN.Backend,
 	)
 }
 

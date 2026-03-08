@@ -95,6 +95,7 @@ type FactStore struct {
 	db     *sql.DB
 	config StorageConfig
 	mu     sync.RWMutex
+	ann    VectorCandidateIndex
 
 	// Prepared statements for performance
 	insertFactStmt    *sql.Stmt
@@ -137,6 +138,13 @@ func NewFactStore(cfg StorageConfig) (*FactStore, error) {
 	}
 
 	return store, nil
+}
+
+// SetANNIndex attaches an ANN sidecar index to the fact store.
+func (s *FactStore) SetANNIndex(index VectorCandidateIndex) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ann = index
 }
 
 // applyStorageDefaults fills in missing configuration values.
@@ -474,6 +482,9 @@ func (s *FactStore) InsertFact(ctx context.Context, fact Fact) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert fact: %w", err)
 	}
+	if s.ann != nil && len(fact.Embedding) > 0 {
+		_ = s.ann.Upsert(ctx, id, fact.Embedding)
+	}
 
 	return id, nil
 }
@@ -507,6 +518,13 @@ func (s *FactStore) UpdateFact(ctx context.Context, fact Fact) error {
 	if err != nil {
 		return fmt.Errorf("failed to update fact: %w", err)
 	}
+	if s.ann != nil {
+		if len(fact.Embedding) > 0 {
+			_ = s.ann.Upsert(ctx, fact.ID, fact.Embedding)
+		} else {
+			_ = s.ann.Delete(ctx, fact.ID)
+		}
+	}
 
 	return nil
 }
@@ -528,6 +546,9 @@ func (s *FactStore) MarkObsolete(ctx context.Context, factID int64, supersededBy
 	_, err := s.markObsoleteStmt.ExecContext(ctx, supersededByVal, factID)
 	if err != nil {
 		return fmt.Errorf("failed to mark fact obsolete: %w", err)
+	}
+	if s.ann != nil {
+		_ = s.ann.Delete(ctx, factID)
 	}
 
 	return nil
@@ -615,9 +636,20 @@ func (s *FactStore) SemanticSearch(ctx context.Context, queryEmbedding []float32
 	}
 
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	ann := s.ann
+	s.mu.RUnlock()
 
 	queryVec := normalizeVectorF32(queryEmbedding)
+
+	if ann != nil {
+		results, err := s.semanticSearchANN(ctx, ann, queryVec, limit)
+		if err == nil && len(results) > 0 {
+			return results, nil
+		}
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	// CRITICAL FIX: Fetch ALL facts with embeddings (not just recent ones)
 	// Then calculate similarity for ALL and sort by score
@@ -716,6 +748,60 @@ func (s *FactStore) SemanticSearch(ctx context.Context, queryEmbedding []float32
 		results = results[:limit]
 	}
 
+	return results, nil
+}
+
+func (s *FactStore) semanticSearchANN(ctx context.Context, ann VectorCandidateIndex, queryVec []float32, limit int) ([]ScoredFact, error) {
+	oversample := limit * 4
+	if oversample < 16 {
+		oversample = 16
+	}
+	candidates, err := ann.Search(ctx, queryVec, limit, oversample)
+	if err != nil || len(candidates) == 0 {
+		return nil, err
+	}
+
+	ids := make([]int64, len(candidates))
+	for i, candidate := range candidates {
+		ids[i] = candidate.FactID
+	}
+
+	facts, err := s.GetFactsByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(facts) == 0 {
+		return nil, nil
+	}
+
+	byID := make(map[int64]Fact, len(facts))
+	for _, fact := range facts {
+		if fact.IsObsolete || len(fact.Embedding) == 0 {
+			continue
+		}
+		byID[fact.ID] = fact
+	}
+
+	results := make([]ScoredFact, 0, len(candidates))
+	for _, candidate := range candidates {
+		fact, ok := byID[candidate.FactID]
+		if !ok {
+			continue
+		}
+		exact := cosineSimilarityOptimized(queryVec, fact.Embedding)
+		results = append(results, ScoredFact{
+			Fact:          fact,
+			SemanticScore: exact,
+			Score:         exact,
+		})
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+	if len(results) > limit {
+		results = results[:limit]
+	}
 	return results, nil
 }
 
@@ -1375,6 +1461,13 @@ func (s *FactStore) GetStats(ctx context.Context) (map[string]interface{}, error
 		stats["avg_importance"] = avgImportance
 	}
 
+	if s.ann != nil {
+		annStats, err := s.ann.Stats(ctx)
+		if err == nil {
+			stats["ann"] = annStats
+		}
+	}
+
 	return stats, nil
 }
 
@@ -1422,6 +1515,22 @@ func (s *FactStore) PruneOldFacts(ctx context.Context) (int, error) {
 	}
 
 	if count > s.config.MaxFacts {
+		var prunedIDs []int64
+		rows, err := s.db.QueryContext(ctx, `
+			SELECT id FROM omem_facts 
+			WHERE is_obsolete = FALSE
+			ORDER BY importance ASC, access_count ASC, created_at ASC
+			LIMIT ?
+		`, count-s.config.MaxFacts)
+		if err == nil {
+			for rows.Next() {
+				var id int64
+				if scanErr := rows.Scan(&id); scanErr == nil {
+					prunedIDs = append(prunedIDs, id)
+				}
+			}
+			rows.Close()
+		}
 		toDelete := count - s.config.MaxFacts
 		result, err = s.db.ExecContext(ctx, `
 			DELETE FROM omem_facts 
@@ -1435,6 +1544,11 @@ func (s *FactStore) PruneOldFacts(ctx context.Context) (int, error) {
 		if err == nil {
 			d, _ := result.RowsAffected()
 			deleted += d
+			if s.ann != nil {
+				for _, id := range prunedIDs {
+					_ = s.ann.Delete(ctx, id)
+				}
+			}
 		}
 	}
 
@@ -1470,6 +1584,12 @@ func (s *FactStore) Close() error {
 
 	if s.db != nil {
 		if err := s.db.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	if s.ann != nil {
+		if err := s.ann.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
