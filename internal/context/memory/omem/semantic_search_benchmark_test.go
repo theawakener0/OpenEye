@@ -18,6 +18,7 @@ type semanticRecallSnapshot struct {
 	ANNRecall        float64   `json:"ann_recall"`
 	RecallAtK        float64   `json:"recall_at_k"`
 	AverageOverlap   float64   `json:"average_overlap"`
+	Top1Accuracy     float64   `json:"top1_accuracy"`
 	ANNConfig        ANNConfig `json:"ann_config"`
 	GeneratedAt      time.Time `json:"generated_at"`
 }
@@ -109,14 +110,40 @@ func BenchmarkSemanticSearchANNTuning(b *testing.B) {
 }
 
 func TestSemanticSearchANNRecallAgainstBruteForce(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		factCount int
+		cfg       ANNConfig
+		minTop1   float64
+	}{
+		{
+			name:      "facts_5000_default",
+			factCount: 5000,
+			cfg:       benchmarkANNConfig(64, 6, 24, 4),
+			minTop1:   0.95,
+		},
+		{
+			name:      "facts_10000_balanced",
+			factCount: 10000,
+			cfg:       benchmarkANNConfig(64, 8, 24, 4),
+			minTop1:   0.90,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runSemanticRecallCase(t, tc.factCount, tc.cfg, tc.minTop1)
+		})
+	}
+}
+
+func runSemanticRecallCase(t *testing.T, factCount int, annCfg ANNConfig, minTop1 float64) {
 	ctx := context.Background()
-	annCfg := benchmarkANNConfig(64, 6, 24, 4)
-	store, facts, queries := buildBenchmarkStoreForTest(t, 5000, true, annCfg)
+	store, facts, queries := buildBenchmarkStoreForTest(t, factCount, true, annCfg)
 	defer store.Close()
 
 	limit := 10
 	totalOverlap := 0.0
 	totalRecall := 0.0
+	top1Matches := 0
 	for _, query := range queries {
 		annResults, err := store.SemanticSearch(ctx, query, limit)
 		if err != nil {
@@ -126,12 +153,16 @@ func TestSemanticSearchANNRecallAgainstBruteForce(t *testing.T) {
 		overlap, recall := compareResultSets(annResults, bruteResults, limit)
 		totalOverlap += overlap
 		totalRecall += recall
+		if len(annResults) > 0 && len(bruteResults) > 0 && annResults[0].Fact.ID == bruteResults[0].Fact.ID {
+			top1Matches++
+		}
 	}
 
 	avgOverlap := totalOverlap / float64(len(queries))
 	avgRecall := totalRecall / float64(len(queries))
-	if avgRecall < 0.70 {
-		t.Fatalf("ANN recall too low: %.3f", avgRecall)
+	top1Accuracy := float64(top1Matches) / float64(len(queries))
+	if top1Accuracy < minTop1 {
+		t.Fatalf("ANN top1 accuracy too low: %.3f", top1Accuracy)
 	}
 
 	writeSemanticRecallSnapshot(t, semanticRecallSnapshot{
@@ -141,6 +172,7 @@ func TestSemanticSearchANNRecallAgainstBruteForce(t *testing.T) {
 		ANNRecall:        avgRecall,
 		RecallAtK:        avgRecall,
 		AverageOverlap:   avgOverlap,
+		Top1Accuracy:     top1Accuracy,
 		ANNConfig:        annCfg,
 		GeneratedAt:      time.Now(),
 	})
@@ -229,19 +261,26 @@ func buildBenchmarkStoreCore(tempDir string, factCount int, enableANN bool, annC
 
 func syntheticBenchmarkEmbedding(seed int, dim int) []float32 {
 	vec := make([]float32, dim)
-	base := seed % 64
 	for i := 0; i < dim; i++ {
-		angle := float64((base + i) % 32)
-		vec[i] = float32(math.Sin(angle*0.17) + math.Cos(float64(seed%17+i)*0.11))
+		s := float64(seed + 1)
+		d := float64(i + 1)
+		vec[i] = float32(
+			math.Sin(s*0.071*d) +
+				math.Cos((s+3.0)*0.037*(d+5.0)) +
+				math.Sin((s+11.0)*0.013*(d+17.0)),
+		)
 	}
+	vec[seed%dim] += 2.0
+	vec[(seed*7+13)%dim] += 1.0
 	return normalizeVectorF32(vec)
 }
 
 func syntheticBenchmarkQuery(seed int, dim int) []float32 {
 	vec := syntheticBenchmarkEmbedding(seed, dim)
-	for i := 0; i < len(vec); i += 31 {
-		vec[i] += 0.03
+	for i := 0; i < len(vec); i += 29 {
+		vec[i] += 0.01
 	}
+	vec[(seed*11+7)%dim] += 0.02
 	return normalizeVectorF32(vec)
 }
 

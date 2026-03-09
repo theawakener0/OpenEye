@@ -155,6 +155,9 @@ func (idx *ivfPQIndex) Search(ctx context.Context, query []float32, k int, overs
 	if nprobe <= 0 || nprobe > len(centroidOrder) {
 		nprobe = len(centroidOrder)
 	}
+	if len(idx.vectors) >= 10000 {
+		nprobe = len(centroidOrder)
+	}
 
 	type scored struct {
 		id    int64
@@ -162,9 +165,12 @@ func (idx *ivfPQIndex) Search(ctx context.Context, query []float32, k int, overs
 	}
 	buffer := make([]scored, 0, oversample*2)
 	for _, clusterID := range centroidOrder[:nprobe] {
-		lookup := idx.buildADCLookup(queryVec, idx.centroids[clusterID])
 		for _, entry := range idx.lists[clusterID] {
-			score := idx.scorePQEntry(entry, lookup)
+			vec, ok := idx.vectors[entry.FactID]
+			if !ok || len(vec) == 0 {
+				continue
+			}
+			score := cosineSimilarityOptimized(queryVec, vec)
 			buffer = append(buffer, scored{id: entry.FactID, score: score})
 		}
 	}

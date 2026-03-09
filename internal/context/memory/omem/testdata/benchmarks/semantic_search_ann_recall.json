@@ -1,10 +1,11 @@
 {
-  "facts": 5000,
+  "facts": 10000,
   "limit": 10,
   "brute_force_recall": 1,
   "ann_recall": 1,
   "recall_at_k": 1,
   "average_overlap": 1,
+  "top1_accuracy": 1,
   "ann_config": {
     "Enabled": true,
     "Backend": "ivfpq",
@@ -15,10 +16,10 @@
     "OversampleFactor": 4,
     "ExactRerankLimit": 64,
     "NList": 64,
-    "NProbe": 6,
+    "NProbe": 8,
     "PQSubvectors": 24,
     "PQBits": 4,
     "TrainMinFacts": 1000
   },
-  "generated_at": "2026-03-09T02:10:10.19921945+02:00"
+  "generated_at": "2026-03-09T02:42:40.451509956+02:00"
 }

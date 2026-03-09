@@ -768,8 +768,14 @@ func (s *FactStore) semanticSearchANN(ctx context.Context, ann VectorCandidateIn
 	if oversample < 16 {
 		oversample = 16
 	}
+	if oversample < limit*8 {
+		oversample = limit * 8
+	}
 	exactRerankLimit := cfg.ExactRerankLimit
 	if exactRerankLimit <= 0 {
+		exactRerankLimit = oversample
+	}
+	if exactRerankLimit < oversample {
 		exactRerankLimit = oversample
 	}
 	candidates, err := ann.Search(ctx, queryVec, limit, oversample, exactRerankLimit)

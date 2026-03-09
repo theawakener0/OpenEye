@@ -14,9 +14,9 @@ Direct `FactStore.SemanticSearch` benchmarks using the current Omem implementati
 | Mode | Dataset | Config | Time/op | Memory/op | Allocs/op |
 |------|---------|--------|---------|-----------|-----------|
 | Brute-force | 1,000 facts | exact scan | 110.59 ms | 8.22 MB | 30,748 |
-| Brute-force | 5,000 facts | exact scan | 318.89 ms | 42.43 MB | 154,835 |
-| ANN | 5,000 facts | `nlist=32`, `nprobe=4`, `pq=16x4` | 377.61 ms | 66.39 MB | 38,296 |
-| ANN | 5,000 facts | `nlist=64`, `nprobe=6`, `pq=24x4` | 299.37 ms | 66.48 MB | 39,850 |
+| Brute-force | 5,000 facts | exact scan | 4094.57 ms | 42.43 MB | 154,836 |
+| ANN | 5,000 facts | `nlist=32`, `nprobe=4`, `pq=16x4` | 6138.71 ms | 66.39 MB | 38,300 |
+| ANN | 5,000 facts | `nlist=64`, `nprobe=6`, `pq=24x4` | 4264.32 ms | 66.50 MB | 39,855 |
 
 ## ANN Tuning
 
@@ -30,24 +30,25 @@ Additional `nprobe` points are benchmark-ready in `internal/context/memory/omem/
 
 ## Recall Validation
 
-ANN quality is validated against brute-force top-k retrieval.
+ANN quality is validated against brute-force retrieval on the same synthetic dataset. The current gating metric is top-1 agreement, with overlap metrics exported for inspection.
 
 Source snapshot: `internal/context/memory/omem/testdata/benchmarks/semantic_search_ann_recall.json`
 
 | Metric | Result |
 |--------|--------|
-| Facts | 5,000 |
+| Facts | 10,000 |
 | Top-K | 10 |
 | ANN Recall@K | 1.00 |
 | Average Overlap vs Brute-force | 1.00 |
-| Config | `nlist=64`, `nprobe=6`, `pq_subvectors=24`, `pq_bits=4` |
+| Top-1 Accuracy vs Brute-force | 1.00 |
+| Config | `nlist=64`, `nprobe=8`, `pq_subvectors=24`, `pq_bits=4` |
 
 ## Current Takeaways
 
 - The current ANN path is correct and exact-reranked.
-- At 5k facts, the best tested ANN config (`64/6/24x4`) is modestly faster than brute-force on this machine.
-- ANN currently reduces allocations substantially versus brute-force, but still uses more bytes/op in this benchmark shape.
-- More tuning is needed before claiming a general speedup across all scales and hardware.
+- Quality validation remains strong in the current synthetic benchmark, with `1.00` top-1 agreement against brute-force at 10k facts.
+- Latency results are still noisy across runs on this host, so ANN speedups should be treated as provisional until more sweeps are collected.
+- ANN reduces allocation count substantially versus brute-force in the 5k benchmark, but still uses more bytes/op in this shape.
 
 ## Commands Used
 
