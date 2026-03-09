@@ -352,30 +352,6 @@ type ParallelConfig struct {
 
 	// EnableAsync enables background processing
 	EnableAsync bool `yaml:"enable_async"`
-
-	// HotCacheEnabled enables the hot cache layer for fast retrieval
-	HotCacheEnabled bool `yaml:"hot_cache_enabled"`
-
-	// HotCacheSize is the maximum number of facts to cache
-	HotCacheSize int `yaml:"hot_cache_size"`
-
-	// HotCacheTTL is the time-to-live for cached entries
-	HotCacheTTL string `yaml:"hot_cache_ttl"`
-
-	// ContextCompressorEnabled enables context compression
-	ContextCompressorEnabled bool `yaml:"context_compressor_enabled"`
-
-	// ContextCompressorMaxTokens max tokens for compressed context
-	ContextCompressorMaxTokens int `yaml:"context_compressor_max_tokens"`
-
-	// MemoryPrunerEnabled enables automatic memory pruning
-	MemoryPrunerEnabled bool `yaml:"memory_pruner_enabled"`
-
-	// MemoryPrunerThreshold triggers pruning when facts exceed this
-	MemoryPrunerThreshold int `yaml:"memory_pruner_threshold"`
-
-	// RerankerEnabled enables reranking of retrieved results
-	RerankerEnabled bool `yaml:"reranker_enabled"`
 }
 
 // DefaultConfig returns a Config with sensible defaults optimized for SLMs.

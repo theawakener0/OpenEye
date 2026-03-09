@@ -102,6 +102,7 @@ func (e *Engine) Initialize(
 		)
 		if err == nil && e.annIndex != nil {
 			e.store.SetANNIndex(e.annIndex)
+			e.store.SetANNConfig(e.config.ANN)
 			if e.config.ANN.RebuildOnStartup {
 				if rebuildErr := e.rebuildANNIndex(context.Background()); rebuildErr != nil {
 					return rebuildErr

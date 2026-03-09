@@ -28,6 +28,8 @@ type ivfPQPersisted struct {
 	Normalized     bool
 	Centroids      [][]float32
 	Lists          [][]ivfListEntry
+	Vectors        map[int64][]float32
+	Assignments    map[int64]int
 	ResidualNorms  map[int64]float32
 	PQ             pqCodebook
 	PQSubvectors   int
@@ -123,7 +125,7 @@ func (idx *ivfPQIndex) Delete(ctx context.Context, factID int64) error {
 	return idx.persistLocked("")
 }
 
-func (idx *ivfPQIndex) Search(ctx context.Context, query []float32, k int, oversample int) ([]ANNCandidate, error) {
+func (idx *ivfPQIndex) Search(ctx context.Context, query []float32, k int, oversample int, exactRerankLimit int) ([]ANNCandidate, error) {
 	_ = ctx
 
 	idx.mu.RLock()
@@ -142,6 +144,9 @@ func (idx *ivfPQIndex) Search(ctx context.Context, query []float32, k int, overs
 	}
 	if oversample < k {
 		oversample = k
+	}
+	if exactRerankLimit > 0 && oversample > exactRerankLimit {
+		oversample = exactRerankLimit
 	}
 
 	queryVec := prepareANNVector(query, idx.normalized)
@@ -567,6 +572,8 @@ func (idx *ivfPQIndex) persistLocked(embeddingModel string) error {
 		Normalized:     idx.normalized,
 		Centroids:      idx.centroids,
 		Lists:          idx.lists,
+		Vectors:        idx.vectors,
+		Assignments:    idx.assignments,
 		ResidualNorms:  idx.residualNorms,
 		PQ:             idx.pq,
 		PQSubvectors:   idx.config.PQSubvectors,
@@ -605,17 +612,27 @@ func (idx *ivfPQIndex) load(expectedEmbeddingModel string) error {
 	idx.normalized = payload.Normalized
 	idx.centroids = payload.Centroids
 	idx.lists = payload.Lists
+	idx.vectors = payload.Vectors
+	if idx.vectors == nil {
+		idx.vectors = make(map[int64][]float32)
+	}
 	idx.residualNorms = payload.ResidualNorms
+	if idx.residualNorms == nil {
+		idx.residualNorms = make(map[int64]float32)
+	}
 	idx.pq = payload.PQ
 	idx.builtAt = payload.BuiltAt
 	idx.stats.LastBuildTime = payload.BuiltAt
 	idx.stats.CentroidCount = len(payload.Centroids)
 	idx.stats.Dimension = payload.Dimension
-	idx.vectors = make(map[int64][]float32)
-	idx.assignments = make(map[int64]int)
-	for listID, list := range payload.Lists {
-		for _, entry := range list {
-			idx.assignments[entry.FactID] = listID
+	idx.stats.FactCount = len(idx.vectors)
+	idx.assignments = payload.Assignments
+	if idx.assignments == nil {
+		idx.assignments = make(map[int64]int)
+		for listID, list := range payload.Lists {
+			for _, entry := range list {
+				idx.assignments[entry.FactID] = listID
+			}
 		}
 	}
 	return nil

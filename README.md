@@ -482,6 +482,8 @@ Production benchmarks (February 2026) running LFM2.5-1.2B on edge hardware:
 - **88% recall** maintained even after 50+ conversation turns
 - Edge verified: Real-time inference on Raspberry Pi 5 (8GB)
 
+**Latest Omem ANN Benchmark Highlight:** On the current `linux/amd64` benchmark host, brute-force semantic search at 5k facts measured **318.89 ms/op**, while the best tested ANN config (`nlist=64`, `nprobe=6`, `pq=24x4`) measured **299.37 ms/op** with **1.00 recall@10** against brute-force. Full results: [`OMEM_BENCHMARKS.md`](OMEM_BENCHMARKS.md)
+
 Use `infer-bench` to measure TTFT, generation TPS, and cache effectiveness on your hardware.
 
 ---

@@ -96,6 +96,7 @@ type FactStore struct {
 	config StorageConfig
 	mu     sync.RWMutex
 	ann    VectorCandidateIndex
+	annCfg ANNConfig
 
 	// Prepared statements for performance
 	insertFactStmt    *sql.Stmt
@@ -145,6 +146,13 @@ func (s *FactStore) SetANNIndex(index VectorCandidateIndex) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ann = index
+}
+
+// SetANNConfig stores ANN runtime config used by semantic search.
+func (s *FactStore) SetANNConfig(cfg ANNConfig) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.annCfg = cfg
 }
 
 // applyStorageDefaults fills in missing configuration values.
@@ -637,14 +645,18 @@ func (s *FactStore) SemanticSearch(ctx context.Context, queryEmbedding []float32
 
 	s.mu.RLock()
 	ann := s.ann
+	annCfg := s.annCfg
 	s.mu.RUnlock()
 
 	queryVec := normalizeVectorF32(queryEmbedding)
 
 	if ann != nil {
-		results, err := s.semanticSearchANN(ctx, ann, queryVec, limit)
+		results, err := s.semanticSearchANN(ctx, ann, annCfg, queryVec, limit)
 		if err == nil && len(results) > 0 {
 			return results, nil
+		}
+		if err != nil && !annCfg.FallbackToScan {
+			return nil, err
 		}
 	}
 
@@ -751,14 +763,21 @@ func (s *FactStore) SemanticSearch(ctx context.Context, queryEmbedding []float32
 	return results, nil
 }
 
-func (s *FactStore) semanticSearchANN(ctx context.Context, ann VectorCandidateIndex, queryVec []float32, limit int) ([]ScoredFact, error) {
-	oversample := limit * 4
+func (s *FactStore) semanticSearchANN(ctx context.Context, ann VectorCandidateIndex, cfg ANNConfig, queryVec []float32, limit int) ([]ScoredFact, error) {
+	oversample := limit * cfg.OversampleFactor
 	if oversample < 16 {
 		oversample = 16
 	}
-	candidates, err := ann.Search(ctx, queryVec, limit, oversample)
+	exactRerankLimit := cfg.ExactRerankLimit
+	if exactRerankLimit <= 0 {
+		exactRerankLimit = oversample
+	}
+	candidates, err := ann.Search(ctx, queryVec, limit, oversample, exactRerankLimit)
 	if err != nil || len(candidates) == 0 {
 		return nil, err
+	}
+	if exactRerankLimit > 0 && len(candidates) > exactRerankLimit {
+		candidates = candidates[:exactRerankLimit]
 	}
 
 	ids := make([]int64, len(candidates))

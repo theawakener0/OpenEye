@@ -12,7 +12,7 @@ type ANNCandidate struct {
 type VectorCandidateIndex interface {
 	Upsert(ctx context.Context, factID int64, embedding []float32) error
 	Delete(ctx context.Context, factID int64) error
-	Search(ctx context.Context, query []float32, k int, oversample int) ([]ANNCandidate, error)
+	Search(ctx context.Context, query []float32, k int, oversample int, exactRerankLimit int) ([]ANNCandidate, error)
 	Rebuild(ctx context.Context, facts []Fact) error
 	Stats(ctx context.Context) (map[string]interface{}, error)
 	Close() error
